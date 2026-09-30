@@ -673,7 +673,7 @@ The repository currently contains the project foundation. Implementation, experi
 
 ---
 
-## License
+## License 
 
 License information will be added with the first open-source release.
 
