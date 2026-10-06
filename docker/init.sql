@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS outbox_events (
+﻿CREATE TABLE IF NOT EXISTS outbox_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     aggregate_type VARCHAR(255) NOT NULL,
     aggregate_id VARCHAR(255) NOT NULL,
@@ -14,9 +14,33 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     CONSTRAINT uq_aggregate_sequence UNIQUE (aggregate_type, aggregate_id, sequence_number)
 );
 
-CREATE INDEX idx_outbox_polling 
-ON outbox_events (created_at) 
+CREATE INDEX IF NOT EXISTS idx_outbox_polling
+ON outbox_events (created_at)
 WHERE status = 'PENDING';
 
-CREATE INDEX idx_outbox_aggregate 
+CREATE INDEX IF NOT EXISTS idx_outbox_aggregate
 ON outbox_events (aggregate_type, aggregate_id);
+
+CREATE TABLE IF NOT EXISTS event_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID NOT NULL,
+    aggregate_type VARCHAR(255) NOT NULL,
+    aggregate_id VARCHAR(255) NOT NULL,
+    sequence_number BIGINT NOT NULL,
+    event_type VARCHAR(255) NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    worker_id VARCHAR(255),
+    details JSONB,
+    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_history_event
+ON event_history (event_id, occurred_at);
+
+CREATE INDEX IF NOT EXISTS idx_event_history_aggregate
+ON event_history (
+    aggregate_type,
+    aggregate_id,
+    sequence_number,
+    occurred_at
+);
