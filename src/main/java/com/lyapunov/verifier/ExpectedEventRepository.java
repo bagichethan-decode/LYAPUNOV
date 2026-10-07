@@ -1,4 +1,4 @@
-﻿package com.lyapunov.verifier;
+package com.lyapunov.verifier;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
