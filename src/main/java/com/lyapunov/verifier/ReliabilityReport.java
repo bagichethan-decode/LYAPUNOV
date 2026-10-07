@@ -1,4 +1,4 @@
-﻿package com.lyapunov.verifier;
+package com.lyapunov.verifier;
 
 import java.util.List;
 

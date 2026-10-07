@@ -21,20 +21,27 @@ import java.util.UUID;
 public class OutboxRepository {
 
     private final DataSource dataSource;
+    private final EventHistoryRepository historyRepository;
 
     public OutboxRepository(DataSource dataSource) {
         this.dataSource = dataSource;
+        this.historyRepository = new EventHistoryRepository(dataSource);
     }
 
     /**
      * Claims a batch of pending or lease-expired events using SELECT ... FOR UPDATE SKIP LOCKED.
      */
-    public List<OutboxEvent> claimPendingEvents(String workerId, int batchSize, Duration leaseDuration) throws SQLException {
+    public List<OutboxEvent> claimPendingEvents(
+        String workerId,
+        int batchSize,
+        Duration leaseDuration
+    ) throws SQLException {
+
         String selectSql = """
-            SELECT id, aggregate_type, aggregate_id, sequence_number, event_type, 
+            SELECT id, aggregate_type, aggregate_id, sequence_number, event_type,
                    payload, status, retry_count, claimed_by, lease_expires_at, created_at, updated_at
             FROM outbox_events
-            WHERE status = 'PENDING' 
+            WHERE status = 'PENDING'
                OR (status = 'CLAIMED' AND lease_expires_at < NOW())
             ORDER BY created_at ASC
             LIMIT ?
@@ -55,13 +62,16 @@ public class OutboxRepository {
 
         try (Connection conn = dataSource.getConnection()) {
             conn.setAutoCommit(false);
+
             try (PreparedStatement selectStmt = conn.prepareStatement(selectSql);
                  PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
 
                 selectStmt.setInt(1, batchSize);
+
                 try (ResultSet rs = selectStmt.executeQuery()) {
                     while (rs.next()) {
                         UUID id = (UUID) rs.getObject("id");
+
                         OutboxEvent event = new OutboxEvent(
                             id,
                             rs.getString("aggregate_type"),
@@ -76,6 +86,7 @@ public class OutboxRepository {
                             rs.getTimestamp("created_at").toInstant(),
                             rs.getTimestamp("updated_at").toInstant()
                         );
+
                         claimed.add(event);
 
                         updateStmt.setString(1, workerId);
@@ -87,8 +98,19 @@ public class OutboxRepository {
 
                 if (!claimed.isEmpty()) {
                     updateStmt.executeBatch();
+
+                    for (OutboxEvent event : claimed) {
+                        historyRepository.record(
+                            event,
+                            "EVENT_CLAIMED",
+                            workerId,
+                            "{\"leaseDurationSeconds\":" + leaseDuration.toSeconds() + "}"
+                        );
+                    }
                 }
+
                 conn.commit();
+
             } catch (SQLException e) {
                 conn.rollback();
                 throw e;
@@ -96,6 +118,7 @@ public class OutboxRepository {
                 conn.setAutoCommit(true);
             }
         }
+
         return claimed;
     }
 
@@ -103,16 +126,56 @@ public class OutboxRepository {
      * Marks an event as successfully published after Kafka broker acknowledgement.
      */
     public void markPublished(UUID eventId) throws SQLException {
-        String sql = """
+
+        String selectSql = """
+            SELECT id, aggregate_type, aggregate_id, sequence_number, event_type,
+                   payload, status, retry_count, claimed_by, lease_expires_at, created_at, updated_at
+            FROM outbox_events
+            WHERE id = ?
+            FOR UPDATE
+        """;
+
+        String updateSql = """
             UPDATE outbox_events
             SET status = 'PUBLISHED',
                 updated_at = NOW()
             WHERE id = ?
         """;
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setObject(1, eventId);
-            stmt.executeUpdate();
+
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+
+            try (PreparedStatement selectStmt = conn.prepareStatement(selectSql);
+                 PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+
+                selectStmt.setObject(1, eventId);
+
+                try (ResultSet rs = selectStmt.executeQuery()) {
+                    if (!rs.next()) {
+                        throw new SQLException("Event not found: " + eventId);
+                    }
+
+                    OutboxEvent event = mapEvent(rs);
+
+                    updateStmt.setObject(1, eventId);
+                    updateStmt.executeUpdate();
+
+                    historyRepository.record(
+                        event,
+                        "EVENT_PUBLISHED",
+                        event.claimedBy(),
+                        "{\"previousStatus\":\"" + event.status() + "\"}"
+                    );
+                }
+
+                conn.commit();
+
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
         }
     }
 
@@ -120,7 +183,16 @@ public class OutboxRepository {
      * Increments retry count and schedules next attempt or marks as failed.
      */
     public void recordFailure(UUID eventId, int maxRetries) throws SQLException {
-        String sql = """
+
+        String selectSql = """
+            SELECT id, aggregate_type, aggregate_id, sequence_number, event_type,
+                   payload, status, retry_count, claimed_by, lease_expires_at, created_at, updated_at
+            FROM outbox_events
+            WHERE id = ?
+            FOR UPDATE
+        """;
+
+        String updateSql = """
             UPDATE outbox_events
             SET retry_count = retry_count + 1,
                 status = CASE WHEN retry_count + 1 >= ? THEN 'FAILED' ELSE 'PENDING' END,
@@ -129,11 +201,66 @@ public class OutboxRepository {
                 updated_at = NOW()
             WHERE id = ?
         """;
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setInt(1, maxRetries);
-            stmt.setObject(2, eventId);
-            stmt.executeUpdate();
+
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+
+            try (PreparedStatement selectStmt = conn.prepareStatement(selectSql);
+                 PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+
+                selectStmt.setObject(1, eventId);
+
+                try (ResultSet rs = selectStmt.executeQuery()) {
+                    if (!rs.next()) {
+                        throw new SQLException("Event not found: " + eventId);
+                    }
+
+                    OutboxEvent event = mapEvent(rs);
+                    int nextRetryCount = event.retryCount() + 1;
+                    String nextStatus = nextRetryCount >= maxRetries
+                        ? "FAILED"
+                        : "PENDING";
+
+                    updateStmt.setInt(1, maxRetries);
+                    updateStmt.setObject(2, eventId);
+                    updateStmt.executeUpdate();
+
+                    historyRepository.record(
+                        event,
+                        "EVENT_FAILED",
+                        event.claimedBy(),
+                        "{\"retryCount\":" + nextRetryCount +
+                            ",\"nextStatus\":\"" + nextStatus + "\"}"
+                    );
+                }
+
+                conn.commit();
+
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
         }
+    }
+
+    private OutboxEvent mapEvent(ResultSet rs) throws SQLException {
+        return new OutboxEvent(
+            (UUID) rs.getObject("id"),
+            rs.getString("aggregate_type"),
+            rs.getString("aggregate_id"),
+            rs.getLong("sequence_number"),
+            rs.getString("event_type"),
+            rs.getString("payload"),
+            EventStatus.valueOf(rs.getString("status")),
+            rs.getInt("retry_count"),
+            rs.getString("claimed_by"),
+            rs.getTimestamp("lease_expires_at") == null
+                ? null
+                : rs.getTimestamp("lease_expires_at").toInstant(),
+            rs.getTimestamp("created_at").toInstant(),
+            rs.getTimestamp("updated_at").toInstant()
+        );
     }
 }
