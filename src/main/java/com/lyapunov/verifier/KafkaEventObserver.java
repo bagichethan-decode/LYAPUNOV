@@ -18,35 +18,40 @@ public class KafkaEventObserver implements AutoCloseable {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public KafkaEventObserver(
-        String bootstrapServers,
-        String groupId,
-        String topic
-    ) {
+            String bootstrapServers,
+            String groupId,
+            String topic) {
+
         Properties properties = new Properties();
 
         properties.put(
-            ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
-            bootstrapServers
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
+                bootstrapServers
         );
+
         properties.put(
-            ConsumerConfig.GROUP_ID_CONFIG,
-            groupId
+                ConsumerConfig.GROUP_ID_CONFIG,
+                groupId
         );
+
         properties.put(
-            ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
-            StringDeserializer.class.getName()
+                ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
+                StringDeserializer.class.getName()
         );
+
         properties.put(
-            ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
-            StringDeserializer.class.getName()
+                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
+                StringDeserializer.class.getName()
         );
+
         properties.put(
-            ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
-            "earliest"
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
+                "earliest"
         );
+
         properties.put(
-            ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG,
-            "false"
+                ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG,
+                "false"
         );
 
         consumer = new KafkaConsumer<>(properties);
@@ -54,32 +59,60 @@ public class KafkaEventObserver implements AutoCloseable {
     }
 
     public List<EventVerifier.ObservedEvent> poll(
-        Duration timeout
-    ) {
+            int expectedCount,
+            Duration timeout) {
+
         List<EventVerifier.ObservedEvent> events = new ArrayList<>();
 
-        for (ConsumerRecord<String, String> record : consumer.poll(timeout)) {
-            events.add(parse(record.value()));
+        long deadline =
+                System.nanoTime() + timeout.toNanos();
+
+        while (events.size() < expectedCount
+                && System.nanoTime() < deadline) {
+
+            Duration remaining = Duration.ofNanos(
+                    Math.max(
+                            1,
+                            deadline - System.nanoTime()
+                    )
+            );
+
+            Duration pollTimeout =
+                    remaining.compareTo(Duration.ofSeconds(1)) > 0
+                            ? Duration.ofSeconds(1)
+                            : remaining;
+
+            for (ConsumerRecord<String, String> record
+                    : consumer.poll(pollTimeout)) {
+
+                events.add(parse(record.value()));
+
+                if (events.size() >= expectedCount) {
+                    break;
+                }
+            }
         }
 
         return events;
     }
 
     private EventVerifier.ObservedEvent parse(String payload) {
+
         try {
             JsonNode json = objectMapper.readTree(payload);
 
             return new EventVerifier.ObservedEvent(
-                json.get("eventId").asText(),
-                json.get("aggregateType").asText(),
-                json.get("aggregateId").asText(),
-                json.get("sequenceNumber").asLong()
+                    json.get("eventId").asText(),
+                    json.get("aggregateType").asText(),
+                    json.get("aggregateId").asText(),
+                    json.get("sequenceNumber").asLong()
             );
 
         } catch (Exception e) {
+
             throw new IllegalArgumentException(
-                "Invalid LYAPUNOV Kafka event: " + payload,
-                e
+                    "Invalid LYAPUNOV Kafka event: " + payload,
+                    e
             );
         }
     }

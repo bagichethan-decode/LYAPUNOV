@@ -33,7 +33,10 @@ public class ReliabilityVerifier {
                 repository.findAll();
 
             List<EventVerifier.ObservedEvent> observed =
-                observer.poll(Duration.ofSeconds(10));
+        observer.poll(
+                expected.size(),
+                Duration.ofSeconds(30)
+        );
 
             ReliabilityReport report =
                 new EventVerifier().verify(expected, observed);
