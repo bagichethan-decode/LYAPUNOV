@@ -21,7 +21,7 @@ public class ExperimentRunner {
             long seed,
             FaultInjector.FaultType faultType,
             int requestedEventCount,
-            Instant executedAt,
+            String executedAt,
             int expectedCount,
             int observedCount,
             List<String> missingEventIds,
@@ -72,7 +72,7 @@ public class ExperimentRunner {
                 seed,
                 faultType,
                 eventCount,
-                Instant.now(),
+                Instant.now().toString(),
                 report.expectedCount(),
                 report.observedCount(),
                 report.missingEventIds(),
@@ -100,7 +100,6 @@ public class ExperimentRunner {
         Path outputFile = outputDirectory.resolve(filename);
 
         ObjectMapper mapper = new ObjectMapper()
-                .findAndRegisterModules()
                 .enable(SerializationFeature.INDENT_OUTPUT);
 
         mapper.writeValue(outputFile.toFile(), result);
@@ -150,7 +149,9 @@ public class ExperimentRunner {
             Path reportFile =
                     runner.writeJsonReport(result, reportDirectory);
 
-            System.out.println("JSON report       : " + reportFile.toAbsolutePath());
+            System.out.println(
+                    "JSON report       : " + reportFile.toAbsolutePath()
+            );
 
             if (result.reliable()) {
                 System.err.println(
