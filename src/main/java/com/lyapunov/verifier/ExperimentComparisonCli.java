@@ -50,10 +50,16 @@ public class ExperimentComparisonCli {
     }
 
     public static void main(String[] args) {
-        if (args.length != 2) {
+        boolean failOnRegression =
+                args.length == 3
+                && "--fail-on-regression".equals(args[2]);
+
+        if (args.length != 2 && !failOnRegression) {
             System.err.println(
                     "Usage: ExperimentComparisonCli "
-                    + "<baseline-report.json> <candidate-report.json>"
+                    + "<baseline-report.json> "
+                    + "<candidate-report.json> "
+                    + "[--fail-on-regression]"
             );
             System.exit(2);
         }
@@ -69,30 +75,38 @@ public class ExperimentComparisonCli {
                     );
 
             System.out.println("=== LYAPUNOV EXPERIMENT COMPARISON ===");
-            System.out.println(
-                    "Baseline report       : "
-                    + comparison.baselineReport()
-            );
-            System.out.println(
-                    "Candidate report      : "
-                    + comparison.candidateReport()
-            );
-            System.out.println(
-                    "Missing event delta   : "
-                    + comparison.missingEventDelta()
-            );
-            System.out.println(
-                    "Duplicate event delta : "
-                    + comparison.duplicateEventDelta()
-            );
-            System.out.println(
-                    "Ordering issue delta  : "
-                    + comparison.orderingViolationDelta()
-            );
-            System.out.println(
-                    "Outcome               : "
-                    + comparison.outcome()
-            );
+            System.out.println("Baseline report       : "
+                    + comparison.baselineReport());
+            System.out.println("Candidate report      : "
+                    + comparison.candidateReport());
+            System.out.println("Missing event delta   : "
+                    + comparison.missingEventDelta());
+            System.out.println("Duplicate event delta : "
+                    + comparison.duplicateEventDelta());
+            System.out.println("Ordering issue delta  : "
+                    + comparison.orderingViolationDelta());
+            System.out.println("Outcome               : "
+                    + comparison.outcome());
+
+            if (failOnRegression) {
+                RegressionGate gate =
+                        new RegressionGate(0, 0, 0);
+
+                RegressionDecision decision =
+                        gate.evaluate(comparison);
+
+                System.out.println("Regression gate       : "
+                        + (decision.passed() ? "PASS" : "FAIL"));
+
+                for (String violation : decision.violations()) {
+                    System.out.println("Violation             : "
+                            + violation);
+                }
+
+                if (!decision.passed()) {
+                    System.exit(1);
+                }
+            }
 
         } catch (IOException | IllegalArgumentException e) {
             System.err.println(
