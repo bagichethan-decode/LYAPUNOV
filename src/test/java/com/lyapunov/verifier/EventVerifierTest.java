@@ -35,8 +35,8 @@ class EventVerifierTest {
         assertEquals(List.of("e4"), report.missingEventIds());
         assertEquals(List.of("e3"), report.duplicateEventIds());
 
-        assertTrue(report.orderingViolations().isEmpty(),
-            "This sequence is not actually out of order");
+       assertEquals(1, report.orderingViolations().size(),
+        "The sequence 3 followed by 2 must be detected as out of order");
 
         assertFalse(report.isReliable());
     }
