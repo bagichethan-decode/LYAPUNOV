@@ -1,4 +1,4 @@
-package com.lyapunov.verifier;
+﻿package com.lyapunov.verifier;
 
 import org.junit.jupiter.api.Test;
 
@@ -85,4 +85,26 @@ class EventVerifierTest {
         assertTrue(report.orderingViolations().isEmpty());
         assertTrue(report.isReliable());
     }
+@Test
+void detectsDifferentEventsWithSameSequenceNumber() {
+    List<EventVerifier.ExpectedEvent> expected = List.of(
+        new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2)
+    );
+
+    List<EventVerifier.ObservedEvent> observed = List.of(
+        new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ObservedEvent("e2", "Order", "order-1", 1)
+    );
+
+    ReliabilityReport report = verifier.verify(expected, observed);
+
+    assertEquals(
+        1,
+        report.orderingViolations().size(),
+        "Different events cannot occupy the same sequence position"
+    );
+
+    assertFalse(report.isReliable());
+}
 }
