@@ -37,15 +37,29 @@ public class OutboxRepository {
         Duration leaseDuration
     ) throws SQLException {
 
-        String selectSql = """
-            SELECT id, aggregate_type, aggregate_id, sequence_number, event_type,
-                   payload, status, retry_count, claimed_by, lease_expires_at, created_at, updated_at
-            FROM outbox_events
-            WHERE status = 'PENDING'
-               OR (status = 'CLAIMED' AND lease_expires_at < NOW())
-            ORDER BY created_at ASC
+         String selectSql = """
+            SELECT e.id, e.aggregate_type, e.aggregate_id, e.sequence_number, e.event_type,
+                   e.payload, e.status, e.retry_count, e.claimed_by, e.lease_expires_at,
+                   e.created_at, e.updated_at
+            FROM outbox_events e
+            WHERE (
+                e.status = 'PENDING'
+                OR (e.status = 'CLAIMED' AND e.lease_expires_at < NOW())
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM outbox_events earlier
+                WHERE earlier.aggregate_type = e.aggregate_type
+                  AND earlier.aggregate_id = e.aggregate_id
+                  AND earlier.sequence_number < e.sequence_number
+                  AND earlier.status <> 'PUBLISHED'
+            )
+            ORDER BY e.created_at ASC,
+                     e.aggregate_type ASC,
+                     e.aggregate_id ASC,
+                     e.sequence_number ASC
             LIMIT ?
-            FOR UPDATE SKIP LOCKED
+            FOR UPDATE OF e SKIP LOCKED
         """;
 
         String updateSql = """
