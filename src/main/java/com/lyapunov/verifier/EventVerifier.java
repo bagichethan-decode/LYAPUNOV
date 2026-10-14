@@ -14,6 +14,7 @@ public class EventVerifier {
         List<ObservedEvent> observed
     ) {
         Set<String> observedIds = new HashSet<>();
+
         List<String> missing = new ArrayList<>();
         List<String> duplicates = new ArrayList<>();
 
@@ -49,21 +50,24 @@ public class EventVerifier {
     ) {
         List<String> violations = new ArrayList<>();
 
-        // Track the latest sequence number observed for each aggregate.
-        Map<String, Long> lastSequenceByAggregate = new HashMap<>();
+        // Track the latest sequence number for each aggregate.
+        Map<AggregateKey, Long> lastSequenceByAggregate =
+            new HashMap<>();
 
-        // Track which event ID first occupied each aggregate sequence.
-        Map<String, Map<Long, String>> eventIdByAggregateSequence =
+        // Track the event ID assigned to each aggregate sequence.
+        Map<AggregateKey, Map<Long, String>> eventIdByAggregateSequence =
             new HashMap<>();
 
         for (ObservedEvent event : observed) {
-            String aggregateKey =
-                event.aggregateType() + ":" + event.aggregateId();
+
+            AggregateKey aggregateKey = new AggregateKey(
+                event.aggregateType(),
+                event.aggregateId()
+            );
 
             long sequenceNumber = event.sequenceNumber();
 
-            // Check whether this sequence number already belongs
-            // to a different event for the same aggregate.
+            // Detect different events occupying the same sequence.
             Map<Long, String> eventsBySequence =
                 eventIdByAggregateSequence.computeIfAbsent(
                     aggregateKey,
@@ -91,7 +95,7 @@ public class EventVerifier {
                 );
             }
 
-            // Check whether the event sequence moves backwards.
+            // Detect sequence numbers moving backwards.
             Long previousSequence =
                 lastSequenceByAggregate.get(aggregateKey);
 
@@ -108,8 +112,8 @@ public class EventVerifier {
                 );
             }
 
-            // Preserve the highest sequence observed so that a
-            // regression cannot hide a later ordering violation.
+            // Preserve the highest sequence observed.
+            // A regression must not lower the stored high-water mark.
             if (
                 previousSequence == null
                     || sequenceNumber > previousSequence
@@ -123,6 +127,13 @@ public class EventVerifier {
 
         return violations;
     }
+
+    // A structured key prevents different aggregates from colliding
+    // when their type or ID contains a colon.
+    private record AggregateKey(
+        String aggregateType,
+        String aggregateId
+    ) {}
 
     public record ExpectedEvent(
         String eventId,

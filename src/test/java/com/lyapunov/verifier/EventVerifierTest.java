@@ -4,7 +4,9 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EventVerifierTest {
 
@@ -35,8 +37,11 @@ class EventVerifierTest {
         assertEquals(List.of("e4"), report.missingEventIds());
         assertEquals(List.of("e3"), report.duplicateEventIds());
 
-       assertEquals(1, report.orderingViolations().size(),
-        "The sequence 3 followed by 2 must be detected as out of order");
+        assertEquals(
+            1,
+            report.orderingViolations().size(),
+            "The sequence 3 followed by 2 must be detected as out of order"
+        );
 
         assertFalse(report.isReliable());
     }
@@ -85,26 +90,74 @@ class EventVerifierTest {
         assertTrue(report.orderingViolations().isEmpty());
         assertTrue(report.isReliable());
     }
-@Test
-void detectsDifferentEventsWithSameSequenceNumber() {
-    List<EventVerifier.ExpectedEvent> expected = List.of(
-        new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
-        new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2)
-    );
 
-    List<EventVerifier.ObservedEvent> observed = List.of(
-        new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
-        new EventVerifier.ObservedEvent("e2", "Order", "order-1", 1)
-    );
+    @Test
+    void detectsDifferentEventsWithSameSequenceNumber() {
 
-    ReliabilityReport report = verifier.verify(expected, observed);
+        List<EventVerifier.ExpectedEvent> expected = List.of(
+            new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
+            new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2)
+        );
 
-    assertEquals(
-        1,
-        report.orderingViolations().size(),
-        "Different events cannot occupy the same sequence position"
-    );
+        List<EventVerifier.ObservedEvent> observed = List.of(
+            new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
+            new EventVerifier.ObservedEvent("e2", "Order", "order-1", 1)
+        );
 
-    assertFalse(report.isReliable());
-}
+        ReliabilityReport report = verifier.verify(expected, observed);
+
+        assertEquals(
+            1,
+            report.orderingViolations().size(),
+            "Different events cannot occupy the same sequence position"
+        );
+
+        assertFalse(report.isReliable());
+    }
+
+    @Test
+    void doesNotMergeAggregatesWhenIdentifiersContainColons() {
+
+        List<EventVerifier.ExpectedEvent> expected = List.of(
+            new EventVerifier.ExpectedEvent(
+                "e1",
+                "Order:Special",
+                "1",
+                1
+            ),
+            new EventVerifier.ExpectedEvent(
+                "e2",
+                "Order",
+                "Special:1",
+                1
+            )
+        );
+
+        List<EventVerifier.ObservedEvent> observed = List.of(
+            new EventVerifier.ObservedEvent(
+                "e1",
+                "Order:Special",
+                "1",
+                1
+            ),
+            new EventVerifier.ObservedEvent(
+                "e2",
+                "Order",
+                "Special:1",
+                1
+            )
+        );
+
+        ReliabilityReport report = verifier.verify(expected, observed);
+
+        assertTrue(
+            report.orderingViolations().isEmpty(),
+            "Different aggregates must remain separate even when their "
+                + "type and ID contain colons"
+        );
+
+        assertTrue(report.missingEventIds().isEmpty());
+        assertTrue(report.duplicateEventIds().isEmpty());
+        assertTrue(report.isReliable());
+    }
 }
