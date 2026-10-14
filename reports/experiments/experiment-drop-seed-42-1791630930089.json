@@ -1,0 +1,13 @@
+{
+  "project" : "LYAPUNOV",
+  "seed" : 42,
+  "faultType" : "DROP",
+  "requestedEventCount" : 10,
+  "executedAt" : "2026-10-10T11:15:30.084626600Z",
+  "expectedCount" : 10,
+  "observedCount" : 9,
+  "missingEventIds" : [ "event-1" ],
+  "duplicateEventIds" : [ ],
+  "orderingViolations" : [ ],
+  "reliable" : false
+}
