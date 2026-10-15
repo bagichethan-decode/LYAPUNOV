@@ -1,4 +1,4 @@
-# LYAPUNOV
+﻿# LYAPUNOV
 
 ### Distributed Event Reliability & Fault-Verification Platform
 
@@ -36,14 +36,14 @@ A common backend design performs two independent operations:
 
 ```text
 Application
-     │
-     ├──────────────► PostgreSQL
-     │                    │
-     │                 COMMIT ✓
-     │
-     └──────────────► Kafka
-                          │
-                       FAILURE ✗
+     â”‚
+     â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–º PostgreSQL
+     â”‚                    â”‚
+     â”‚                 COMMIT âœ“
+     â”‚
+     â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–º Kafka
+                          â”‚
+                       FAILURE âœ—
 ```
 
 If the database update succeeds but the event publish fails, the database and downstream services can disagree.
@@ -181,20 +181,20 @@ A simplified event lifecycle looks like this:
 
 ```text
 CREATED
-   │
-   ▼
+   â”‚
+   â–¼
 PERSISTED
-   │
-   ▼
+   â”‚
+   â–¼
 CLAIMED
-   │
-   ▼
+   â”‚
+   â–¼
 PUBLISHED
-   │
-   ▼
+   â”‚
+   â–¼
 ACKNOWLEDGED
-   │
-   ▼
+   â”‚
+   â–¼
 COMPLETED
 ```
 
@@ -202,18 +202,18 @@ If the worker fails before completion:
 
 ```text
 CLAIMED
-   │
-   │  process crash
-   ▼
+   â”‚
+   â”‚  process crash
+   â–¼
 LEASE EXPIRES
-   │
-   ▼
+   â”‚
+   â–¼
 RE-CLAIMED
-   │
-   ▼
+   â”‚
+   â–¼
 RETRIED
-   │
-   ▼
+   â”‚
+   â–¼
 PUBLISHED
 ```
 
@@ -234,7 +234,7 @@ For an aggregate with monotonically increasing sequence numbers:
 ```text
 Expected:
 
-1 → 2 → 3 → 4 → 5 → 6 → 7 → ...
+1 â†’ 2 â†’ 3 â†’ 4 â†’ 5 â†’ 6 â†’ 7 â†’ ...
 
 ```
 
@@ -242,18 +242,18 @@ The verifier checks for:
 
 ```text
 Missing sequence
-1 → 2 → 4 → 5
-        ↑
+1 â†’ 2 â†’ 4 â†’ 5
+        â†‘
       missing 3
 
 Ordering violation
-1 → 2 → 4 → 3 → 5
-            ↑
+1 â†’ 2 â†’ 4 â†’ 3 â†’ 5
+            â†‘
         out of order
 
 Duplicate replay
-1 → 2 → 3 → 3 → 4
-            ↑
+1 â†’ 2 â†’ 3 â†’ 3 â†’ 4
+            â†‘
         duplicate
 ```
 
@@ -315,18 +315,18 @@ This is important for handling failures such as:
 
 ```text
 Worker A
-   │
-   ├── claims work
-   │
-   X── process crashes
-   │
-   ▼
+   â”‚
+   â”œâ”€â”€ claims work
+   â”‚
+   Xâ”€â”€ process crashes
+   â”‚
+   â–¼
 Lease expires
-   │
-   ▼
+   â”‚
+   â–¼
 Worker B
-   │
-   └── recovers work
+   â”‚
+   â””â”€â”€ recovers work
 ```
 
 ---
@@ -340,10 +340,10 @@ Per-aggregate ordering will be maintained by consistently routing events belongi
 For example:
 
 ```text
-user-101 → partition 2
-user-205 → partition 0
-user-314 → partition 1
-user-101 → partition 2
+user-101 â†’ partition 2
+user-205 â†’ partition 0
+user-314 â†’ partition 1
+user-101 â†’ partition 2
 ```
 
 This allows the sequence of events belonging to one aggregate to remain ordered within that partition.
@@ -360,22 +360,22 @@ Conceptually:
 
 ```text
 Attempt 1
-   │
-   └── failure
-        │
-        ▼
+   â”‚
+   â””â”€â”€ failure
+        â”‚
+        â–¼
       wait
-        │
+        â”‚
 Attempt 2
-   │
-   └── failure
-        │
-        ▼
+   â”‚
+   â””â”€â”€ failure
+        â”‚
+        â–¼
       longer wait
-        │
+        â”‚
 Attempt 3
-   │
-   └── success
+   â”‚
+   â””â”€â”€ success
 ```
 
 Persistent failures can eventually be routed to the Dead-Letter Queue.
@@ -398,15 +398,15 @@ Planned experiments include:
 
 ```text
 Generate events
-      ↓
+      â†“
 Start relay
-      ↓
+      â†“
 Process events
-      ↓
+      â†“
 SIGKILL relay
-      ↓
+      â†“
 Recover
-      ↓
+      â†“
 Verify stream
 ```
 
@@ -414,17 +414,17 @@ Verify stream
 
 ```text
 Producer
-   │
+   â”‚
    X
-   │
+   â”‚
 Kafka
 
 Network connection interrupted
-        ↓
+        â†“
 Retry
-        ↓
+        â†“
 Recovery
-        ↓
+        â†“
 Verification
 ```
 
@@ -448,15 +448,15 @@ The verifier will compare:
 
 ```text
 Expected Events
-       │
-       ▼
+       â”‚
+       â–¼
 Database / Workload Record
-       │
-       │
-       ▼
+       â”‚
+       â”‚
+       â–¼
 Actual Kafka Stream
-       │
-       ▼
+       â”‚
+       â–¼
 Invariant Checks
 ```
 
@@ -537,40 +537,68 @@ The repository will evolve toward a structure similar to:
 
 ```text
 lyapunov/
-│
-├── src/
-│   ├── main/
-│   │   └── java/
-│   │       └── com/
-│   │           └── lyapunov/
-│   │
-│   └── test/
-│       └── java/
-│           └── com/
-│               └── lyapunov/
-│
-├── docker/
-│
-├── scripts/
-│   ├── chaos/
-│   └── benchmark/
-│
-├── docs/
-│   ├── architecture/
-│   └── experiments/
-│
-├── pom.xml
-├── README.md
-└── .gitignore
+â”‚
+â”œâ”€â”€ src/
+â”‚   â”œâ”€â”€ main/
+â”‚   â”‚   â””â”€â”€ java/
+â”‚   â”‚       â””â”€â”€ com/
+â”‚   â”‚           â””â”€â”€ lyapunov/
+â”‚   â”‚
+â”‚   â””â”€â”€ test/
+â”‚       â””â”€â”€ java/
+â”‚           â””â”€â”€ com/
+â”‚               â””â”€â”€ lyapunov/
+â”‚
+â”œâ”€â”€ docker/
+â”‚
+â”œâ”€â”€ scripts/
+â”‚   â”œâ”€â”€ chaos/
+â”‚   â””â”€â”€ benchmark/
+â”‚
+â”œâ”€â”€ docs/
+â”‚   â”œâ”€â”€ architecture/
+â”‚   â””â”€â”€ experiments/
+â”‚
+â”œâ”€â”€ pom.xml
+â”œâ”€â”€ README.md
+â””â”€â”€ .gitignore
 ```
 
 Directories and components will be added as they become part of the implementation.
 
 ---
 
+# Current Implementation
+
+LYAPUNOV is under active development. The current implementation work focuses on
+building the durable event foundation and independently checking event correctness.
+
+### Implemented foundation
+
+- Java project with Maven Wrapper.
+- Docker Compose configuration for PostgreSQL and Apache Kafka.
+- PostgreSQL outbox event model and repository.
+- Event verification logic with unit tests.
+- Aggregate-key collision protection in the verifier.
+
+### Current engineering priorities
+
+- Strengthen per-aggregate event ordering guarantees.
+- Validate fault-injection experiments and their generated reports.
+- Expand reliability testing and recovery scenarios.
+- Verify database and broker integration in a working Docker environment.
+
+### Reliability principle
+
+A successful publish operation alone does not prove that an event stream is correct.
+LYAPUNOV aims to verify completeness, duplicate delivery, and ordering independently.
+
+Benchmark results will be documented only after they have been measured and validated.
+
+---
 # Development Roadmap
 
-### Phase 1 — Foundation
+### Phase 1 â€” Foundation
 
 * [x] Project concept and architecture
 * [ ] Java 21 Maven project
@@ -579,7 +607,7 @@ Directories and components will be added as they become part of the implementati
 * [ ] PostgreSQL setup
 * [ ] Kafka setup
 
-### Phase 2 — Event Engine
+### Phase 2 â€” Event Engine
 
 * [ ] Outbox schema
 * [ ] Event persistence
@@ -588,7 +616,7 @@ Directories and components will be added as they become part of the implementati
 * [ ] Kafka acknowledgements
 * [ ] Event completion handling
 
-### Phase 3 — Reliability
+### Phase 3 â€” Reliability
 
 * [ ] Concurrent workers
 * [ ] `SKIP LOCKED`
@@ -598,7 +626,7 @@ Directories and components will be added as they become part of the implementati
 * [ ] Per-aggregate ordering
 * [ ] Dead-Letter Queue
 
-### Phase 4 — Verification
+### Phase 4 â€” Verification
 
 * [ ] Workload generator
 * [ ] Independent Kafka consumer
@@ -608,7 +636,7 @@ Directories and components will be added as they become part of the implementati
 * [ ] Ordering verification
 * [ ] Recovery-time measurement
 
-### Phase 5 — Chaos Engineering
+### Phase 5 â€” Chaos Engineering
 
 * [ ] Process crash injection
 * [ ] Network failure injection
@@ -617,7 +645,7 @@ Directories and components will be added as they become part of the implementati
 * [ ] Poison-event experiments
 * [ ] Automated experiment runs
 
-### Phase 6 — Benchmarking
+### Phase 6 â€” Benchmarking
 
 * [ ] Throughput benchmarks
 * [ ] Latency measurements
@@ -649,7 +677,7 @@ The component responsible for delivering events should not be the only component
 
 ### Start simple
 
-The first version focuses on a well-defined PostgreSQL → Kafka event pipeline before introducing unnecessary distributed complexity.
+The first version focuses on a well-defined PostgreSQL â†’ Kafka event pipeline before introducing unnecessary distributed complexity.
 
 ---
 
@@ -678,4 +706,30 @@ The repository currently contains the project foundation. Implementation, experi
 License information will be added with the first open-source release.
 
 
+
+
+
+---
+
+## Current Implementation Status
+
+LYAPUNOV is being developed incrementally, with correctness and recoverability as primary engineering goals.
+
+The current foundation includes:
+
+- Java and Maven Wrapper project setup.
+- Docker Compose configuration for PostgreSQL and Apache Kafka.
+- PostgreSQL outbox event persistence and repository components.
+- Event verification logic with unit tests.
+- Aggregate-key collision protection in the verifier.
+- Initial fault-injection experiment reports.
+
+### Current Priorities
+
+1. Validate per-aggregate ordering behavior.
+2. Improve the reliability of experiment generation and reporting.
+3. Expand recovery and failure-injection tests.
+4. Validate database and Kafka integration with Docker running.
+
+Implementation status and benchmark claims should reflect verified code and test results, not planned functionality.
 
