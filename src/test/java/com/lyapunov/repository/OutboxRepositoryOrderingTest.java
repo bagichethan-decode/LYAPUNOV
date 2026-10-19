@@ -1,4 +1,4 @@
-﻿package com.lyapunov.repository;
+package com.lyapunov.repository;
 
 import com.lyapunov.model.OutboxEvent;
 import com.zaxxer.hikari.HikariConfig;
