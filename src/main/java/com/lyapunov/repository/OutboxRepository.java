@@ -24,6 +24,10 @@ public class OutboxRepository {
     private final EventHistoryRepository historyRepository;
 
     public OutboxRepository(DataSource dataSource) {
+        if (dataSource == null) {
+            throw new IllegalArgumentException("dataSource must not be null");
+        }
+
         this.dataSource = dataSource;
         this.historyRepository = new EventHistoryRepository(dataSource);
     }
@@ -37,7 +41,17 @@ public class OutboxRepository {
         Duration leaseDuration
     ) throws SQLException {
 
-         String selectSql = """
+        if (workerId == null || workerId.isBlank()) {
+            throw new IllegalArgumentException("workerId must not be null or blank");
+        }
+        if (batchSize <= 0) {
+            throw new IllegalArgumentException("batchSize must be positive");
+        }
+        if (leaseDuration == null || leaseDuration.isZero() || leaseDuration.isNegative()) {
+            throw new IllegalArgumentException("leaseDuration must be positive");
+        }
+
+        String selectSql = """
             SELECT e.id, e.aggregate_type, e.aggregate_id, e.sequence_number, e.event_type,
                    e.payload, e.status, e.retry_count, e.claimed_by, e.lease_expires_at,
                    e.created_at, e.updated_at
@@ -141,6 +155,10 @@ public class OutboxRepository {
      */
     public void markPublished(UUID eventId) throws SQLException {
 
+        if (eventId == null) {
+            throw new IllegalArgumentException("eventId must not be null");
+        }
+
         String selectSql = """
             SELECT id, aggregate_type, aggregate_id, sequence_number, event_type,
                    payload, status, retry_count, claimed_by, lease_expires_at, created_at, updated_at
@@ -197,6 +215,13 @@ public class OutboxRepository {
      * Increments retry count and schedules next attempt or marks as failed.
      */
     public void recordFailure(UUID eventId, int maxRetries) throws SQLException {
+
+        if (eventId == null) {
+            throw new IllegalArgumentException("eventId must not be null");
+        }
+        if (maxRetries <= 0) {
+            throw new IllegalArgumentException("maxRetries must be positive");
+        }
 
         String selectSql = """
             SELECT id, aggregate_type, aggregate_id, sequence_number, event_type,
