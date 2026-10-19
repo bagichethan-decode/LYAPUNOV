@@ -69,7 +69,7 @@ public class OutboxRepository {
                 WHERE earlier.aggregate_type = e.aggregate_type
                   AND earlier.aggregate_id = e.aggregate_id
                   AND earlier.sequence_number < e.sequence_number
-                  AND earlier.status <> 'PUBLISHED'
+                  AND earlier.status NOT IN ('PUBLISHED', 'SKIPPED')
             )
             ORDER BY e.created_at ASC,
                      e.aggregate_type ASC,
@@ -274,7 +274,7 @@ public class OutboxRepository {
         String updateSql = """
             UPDATE outbox_events
             SET retry_count = retry_count + 1,
-                status = CASE WHEN retry_count + 1 >= ? THEN 'FAILED' ELSE 'PENDING' END,
+                status = CASE WHEN retry_count + 1 >= ? THEN 'DEAD' ELSE 'PENDING' END,
                 claimed_by = NULL,
                 claim_token = NULL,
                 lease_expires_at = NULL,
@@ -305,7 +305,7 @@ public class OutboxRepository {
                     }
 
                     int nextRetryCount = event.retryCount() + 1;
-                    String nextStatus = nextRetryCount >= maxRetries ? "FAILED" : "PENDING";
+                    String nextStatus = nextRetryCount >= maxRetries ? "DEAD" : "PENDING";
 
                     updateStmt.setInt(1, maxRetries);
                     updateStmt.setObject(2, eventId);
@@ -336,6 +336,133 @@ public class OutboxRepository {
                 conn.setAutoCommit(true);
             }
         }
+    }
+
+    /**
+     * Requeues a terminally failed event after an operator reviews the failure.
+     * The retry budget is reset and the operator action is persisted atomically
+     * with the state change. Legacy FAILED rows are accepted for compatibility.
+     */
+    public void retryDeadEvent(UUID eventId, String operatorId, String reason) throws SQLException {
+        transitionDeadEvent(eventId, operatorId, reason, "PENDING", "EVENT_RETRIED", true);
+    }
+
+    /**
+     * Explicitly skips a terminally failed event. SKIPPED events no longer block
+     * later sequence numbers for their aggregate, and the action is audited.
+     */
+    public void skipDeadEvent(UUID eventId, String operatorId, String reason) throws SQLException {
+        transitionDeadEvent(eventId, operatorId, reason, "SKIPPED", "EVENT_SKIPPED", false);
+    }
+
+    private void transitionDeadEvent(
+        UUID eventId,
+        String operatorId,
+        String reason,
+        String targetStatus,
+        String action,
+        boolean resetRetryCount
+    ) throws SQLException {
+        validateOperatorActionArguments(eventId, operatorId, reason);
+
+        String selectSql = """
+            SELECT id, aggregate_type, aggregate_id, sequence_number, event_type,
+                   payload, status, retry_count, claimed_by, claim_token,
+                   lease_expires_at, created_at, updated_at
+            FROM outbox_events
+            WHERE id = ?
+            FOR UPDATE
+        """;
+
+        String updateSql = """
+            UPDATE outbox_events
+            SET status = ?,
+                retry_count = CASE WHEN ? THEN 0 ELSE retry_count END,
+                claimed_by = NULL,
+                claim_token = NULL,
+                lease_expires_at = NULL,
+                updated_at = clock_timestamp()
+            WHERE id = ?
+              AND status IN ('DEAD', 'FAILED')
+        """;
+
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+
+            try (PreparedStatement selectStmt = conn.prepareStatement(selectSql);
+                 PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+                selectStmt.setObject(1, eventId);
+
+                try (ResultSet rs = selectStmt.executeQuery()) {
+                    if (!rs.next()) {
+                        throw new SQLException("Event not found: " + eventId);
+                    }
+
+                    OutboxEvent event = mapEvent(rs);
+                    if (event.status() != EventStatus.DEAD && event.status() != EventStatus.FAILED) {
+                        throw new SQLException(
+                            "Operator action requires a DEAD event; current status is " + event.status()
+                        );
+                    }
+
+                    updateStmt.setString(1, targetStatus);
+                    updateStmt.setBoolean(2, resetRetryCount);
+                    updateStmt.setObject(3, eventId);
+                    if (updateStmt.executeUpdate() != 1) {
+                        throw new SQLException("Could not transition dead event: " + eventId);
+                    }
+
+                    String details = "{\"previousStatus\":\"" + event.status()
+                        + "\",\"previousRetryCount\":" + event.retryCount()
+                        + ",\"reason\":\"" + escapeJson(reason) + "\"}";
+                    historyRepository.record(conn, event, action, operatorId, details);
+                }
+
+                conn.commit();
+
+            } catch (SQLException | RuntimeException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    private static void validateOperatorActionArguments(UUID eventId, String operatorId, String reason) {
+        if (eventId == null) {
+            throw new IllegalArgumentException("eventId must not be null");
+        }
+        if (operatorId == null || operatorId.isBlank()) {
+            throw new IllegalArgumentException("operatorId must not be null or blank");
+        }
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("reason must not be null or blank");
+        }
+    }
+
+    private static String escapeJson(String value) {
+        StringBuilder escaped = new StringBuilder(value.length() + 16);
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            switch (ch) {
+                case '"' -> escaped.append("\\\"");
+                case '\\' -> escaped.append("\\\\");
+                case '\b' -> escaped.append("\\b");
+                case '\f' -> escaped.append("\\f");
+                case '\n' -> escaped.append("\\n");
+                case '\r' -> escaped.append("\\r");
+                case '\t' -> escaped.append("\\t");
+                default -> {
+                    if (ch < 0x20) {
+                        escaped.append(String.format("\\u%04x", (int) ch));
+                    } else {
+                        escaped.append(ch);
+                    }
+                }
+            }
+        }
+        return escaped.toString();
     }
 
     private static void validateClaimArguments(UUID eventId, String workerId, UUID claimToken) {

@@ -22,6 +22,8 @@ public record OutboxEvent(
         PENDING,
         CLAIMED,
         PUBLISHED,
+        DEAD,
+        SKIPPED,
         FAILED
     }
 }
