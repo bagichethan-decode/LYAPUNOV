@@ -6,7 +6,7 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.util.UUID;
+import java.util.Objects;
 
 /**
  * Persists the lifecycle of outbox events for reliability analysis and autopsy.
@@ -16,11 +16,11 @@ public class EventHistoryRepository {
     private final DataSource dataSource;
 
     public EventHistoryRepository(DataSource dataSource) {
-        this.dataSource = dataSource;
+        this.dataSource = Objects.requireNonNull(dataSource, "dataSource must not be null");
     }
 
     /**
-     * Records a lifecycle action for an outbox event.
+     * Records a lifecycle action using its own connection and transaction.
      */
     public void record(
         OutboxEvent event,
@@ -28,6 +28,25 @@ public class EventHistoryRepository {
         String workerId,
         String details
     ) throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            record(conn, event, action, workerId, details);
+        }
+    }
+
+    /**
+     * Records a lifecycle action on the caller's connection so it can commit or roll back
+     * atomically with the related outbox state transition.
+     */
+    public void record(
+        Connection connection,
+        OutboxEvent event,
+        String action,
+        String workerId,
+        String details
+    ) throws SQLException {
+        Objects.requireNonNull(connection, "connection must not be null");
+        Objects.requireNonNull(event, "event must not be null");
+        Objects.requireNonNull(action, "action must not be null");
 
         String sql = """
             INSERT INTO event_history (
@@ -43,9 +62,7 @@ public class EventHistoryRepository {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)
         """;
 
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setObject(1, event.id());
             stmt.setString(2, event.aggregateType());
             stmt.setString(3, event.aggregateId());
@@ -59,12 +76,7 @@ public class EventHistoryRepository {
                 stmt.setString(7, workerId);
             }
 
-            if (details == null) {
-                stmt.setString(8, "{}");
-            } else {
-                stmt.setString(8, details);
-            }
-
+            stmt.setString(8, details == null ? "{}" : details);
             stmt.executeUpdate();
         }
     }

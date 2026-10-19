@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -34,6 +35,8 @@ public class OutboxRepository {
 
     /**
      * Claims a batch of pending or lease-expired events using SELECT ... FOR UPDATE SKIP LOCKED.
+     * Each claim receives a fresh token. Completion and failure operations must present that
+     * token, which fences off stale workers after a lease has been reclaimed.
      */
     public List<OutboxEvent> claimPendingEvents(
         String workerId,
@@ -53,12 +56,12 @@ public class OutboxRepository {
 
         String selectSql = """
             SELECT e.id, e.aggregate_type, e.aggregate_id, e.sequence_number, e.event_type,
-                   e.payload, e.status, e.retry_count, e.claimed_by, e.lease_expires_at,
-                   e.created_at, e.updated_at
+                   e.payload, e.status, e.retry_count, e.claimed_by, e.claim_token,
+                   e.lease_expires_at, e.created_at, e.updated_at
             FROM outbox_events e
             WHERE (
                 e.status = 'PENDING'
-                OR (e.status = 'CLAIMED' AND e.lease_expires_at < NOW())
+                OR (e.status = 'CLAIMED' AND e.lease_expires_at < clock_timestamp())
             )
             AND NOT EXISTS (
                 SELECT 1
@@ -80,8 +83,9 @@ public class OutboxRepository {
             UPDATE outbox_events
             SET status = 'CLAIMED',
                 claimed_by = ?,
+                claim_token = ?,
                 lease_expires_at = ?,
-                updated_at = NOW()
+                updated_at = clock_timestamp()
             WHERE id = ?
         """;
 
@@ -99,6 +103,7 @@ public class OutboxRepository {
                 try (ResultSet rs = selectStmt.executeQuery()) {
                     while (rs.next()) {
                         UUID id = (UUID) rs.getObject("id");
+                        UUID claimToken = UUID.randomUUID();
 
                         OutboxEvent event = new OutboxEvent(
                             id,
@@ -110,6 +115,7 @@ public class OutboxRepository {
                             EventStatus.CLAIMED,
                             rs.getInt("retry_count"),
                             workerId,
+                            claimToken,
                             leaseExpiry,
                             rs.getTimestamp("created_at").toInstant(),
                             rs.getTimestamp("updated_at").toInstant()
@@ -118,28 +124,36 @@ public class OutboxRepository {
                         claimed.add(event);
 
                         updateStmt.setString(1, workerId);
-                        updateStmt.setTimestamp(2, Timestamp.from(leaseExpiry));
-                        updateStmt.setObject(3, id);
+                        updateStmt.setObject(2, claimToken);
+                        updateStmt.setTimestamp(3, Timestamp.from(leaseExpiry));
+                        updateStmt.setObject(4, id);
                         updateStmt.addBatch();
                     }
                 }
 
                 if (!claimed.isEmpty()) {
-                    updateStmt.executeBatch();
+                    int[] updates = updateStmt.executeBatch();
+                    for (int updated : updates) {
+                        if (updated == 0 || updated == PreparedStatement.EXECUTE_FAILED) {
+                            throw new SQLException("Failed to persist an outbox event claim");
+                        }
+                    }
 
                     for (OutboxEvent event : claimed) {
                         historyRepository.record(
+                            conn,
                             event,
                             "EVENT_CLAIMED",
                             workerId,
-                            "{\"leaseDurationSeconds\":" + leaseDuration.toSeconds() + "}"
+                            "{\"leaseDurationMillis\":" + leaseDuration.toMillis() +
+                                ",\"claimToken\":\"" + event.claimToken() + "\"}"
                         );
                     }
                 }
 
                 conn.commit();
 
-            } catch (SQLException e) {
+            } catch (SQLException | RuntimeException e) {
                 conn.rollback();
                 throw e;
             } finally {
@@ -151,17 +165,21 @@ public class OutboxRepository {
     }
 
     /**
-     * Marks an event as successfully published after Kafka broker acknowledgement.
+     * Marks an event as published only if the caller still owns the unexpired claim.
+     * Returns false when the claim is stale, expired, or owned by another worker.
      */
-    public void markPublished(UUID eventId) throws SQLException {
-
-        if (eventId == null) {
-            throw new IllegalArgumentException("eventId must not be null");
-        }
+    public boolean markPublished(
+        UUID eventId,
+        String workerId,
+        UUID claimToken
+    ) throws SQLException {
+        validateClaimArguments(eventId, workerId, claimToken);
 
         String selectSql = """
             SELECT id, aggregate_type, aggregate_id, sequence_number, event_type,
-                   payload, status, retry_count, claimed_by, lease_expires_at, created_at, updated_at
+                   payload, status, retry_count, claimed_by, claim_token,
+                   lease_expires_at, created_at, updated_at,
+                   lease_expires_at > clock_timestamp() AS lease_valid
             FROM outbox_events
             WHERE id = ?
             FOR UPDATE
@@ -170,8 +188,15 @@ public class OutboxRepository {
         String updateSql = """
             UPDATE outbox_events
             SET status = 'PUBLISHED',
-                updated_at = NOW()
+                claimed_by = NULL,
+                claim_token = NULL,
+                lease_expires_at = NULL,
+                updated_at = clock_timestamp()
             WHERE id = ?
+              AND status = 'CLAIMED'
+              AND claimed_by = ?
+              AND claim_token = ?
+              AND lease_expires_at > clock_timestamp()
         """;
 
         try (Connection conn = dataSource.getConnection()) {
@@ -179,7 +204,6 @@ public class OutboxRepository {
 
             try (PreparedStatement selectStmt = conn.prepareStatement(selectSql);
                  PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
-
                 selectStmt.setObject(1, eventId);
 
                 try (ResultSet rs = selectStmt.executeQuery()) {
@@ -188,21 +212,32 @@ public class OutboxRepository {
                     }
 
                     OutboxEvent event = mapEvent(rs);
+                    if (!isCurrentClaim(event, workerId, claimToken) || !rs.getBoolean("lease_valid")) {
+                        conn.commit();
+                        return false;
+                    }
 
                     updateStmt.setObject(1, eventId);
-                    updateStmt.executeUpdate();
+                    updateStmt.setString(2, workerId);
+                    updateStmt.setObject(3, claimToken);
+                    if (updateStmt.executeUpdate() != 1) {
+                        conn.commit();
+                        return false;
+                    }
 
                     historyRepository.record(
+                        conn,
                         event,
                         "EVENT_PUBLISHED",
-                        event.claimedBy(),
+                        workerId,
                         "{\"previousStatus\":\"" + event.status() + "\"}"
                     );
                 }
 
                 conn.commit();
+                return true;
 
-            } catch (SQLException e) {
+            } catch (SQLException | RuntimeException e) {
                 conn.rollback();
                 throw e;
             } finally {
@@ -212,20 +247,25 @@ public class OutboxRepository {
     }
 
     /**
-     * Increments retry count and schedules next attempt or marks as failed.
+     * Records a failed delivery only if the caller still owns the unexpired claim.
+     * Returns false when the claim is stale, expired, or owned by another worker.
      */
-    public void recordFailure(UUID eventId, int maxRetries) throws SQLException {
-
-        if (eventId == null) {
-            throw new IllegalArgumentException("eventId must not be null");
-        }
+    public boolean recordFailure(
+        UUID eventId,
+        String workerId,
+        UUID claimToken,
+        int maxRetries
+    ) throws SQLException {
+        validateClaimArguments(eventId, workerId, claimToken);
         if (maxRetries <= 0) {
             throw new IllegalArgumentException("maxRetries must be positive");
         }
 
         String selectSql = """
             SELECT id, aggregate_type, aggregate_id, sequence_number, event_type,
-                   payload, status, retry_count, claimed_by, lease_expires_at, created_at, updated_at
+                   payload, status, retry_count, claimed_by, claim_token,
+                   lease_expires_at, created_at, updated_at,
+                   lease_expires_at > clock_timestamp() AS lease_valid
             FROM outbox_events
             WHERE id = ?
             FOR UPDATE
@@ -236,9 +276,14 @@ public class OutboxRepository {
             SET retry_count = retry_count + 1,
                 status = CASE WHEN retry_count + 1 >= ? THEN 'FAILED' ELSE 'PENDING' END,
                 claimed_by = NULL,
+                claim_token = NULL,
                 lease_expires_at = NULL,
-                updated_at = NOW()
+                updated_at = clock_timestamp()
             WHERE id = ?
+              AND status = 'CLAIMED'
+              AND claimed_by = ?
+              AND claim_token = ?
+              AND lease_expires_at > clock_timestamp()
         """;
 
         try (Connection conn = dataSource.getConnection()) {
@@ -246,7 +291,6 @@ public class OutboxRepository {
 
             try (PreparedStatement selectStmt = conn.prepareStatement(selectSql);
                  PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
-
                 selectStmt.setObject(1, eventId);
 
                 try (ResultSet rs = selectStmt.executeQuery()) {
@@ -255,33 +299,61 @@ public class OutboxRepository {
                     }
 
                     OutboxEvent event = mapEvent(rs);
+                    if (!isCurrentClaim(event, workerId, claimToken) || !rs.getBoolean("lease_valid")) {
+                        conn.commit();
+                        return false;
+                    }
+
                     int nextRetryCount = event.retryCount() + 1;
-                    String nextStatus = nextRetryCount >= maxRetries
-                        ? "FAILED"
-                        : "PENDING";
+                    String nextStatus = nextRetryCount >= maxRetries ? "FAILED" : "PENDING";
 
                     updateStmt.setInt(1, maxRetries);
                     updateStmt.setObject(2, eventId);
-                    updateStmt.executeUpdate();
+                    updateStmt.setString(3, workerId);
+                    updateStmt.setObject(4, claimToken);
+                    if (updateStmt.executeUpdate() != 1) {
+                        conn.commit();
+                        return false;
+                    }
 
                     historyRepository.record(
+                        conn,
                         event,
                         "EVENT_FAILED",
-                        event.claimedBy(),
+                        workerId,
                         "{\"retryCount\":" + nextRetryCount +
                             ",\"nextStatus\":\"" + nextStatus + "\"}"
                     );
                 }
 
                 conn.commit();
+                return true;
 
-            } catch (SQLException e) {
+            } catch (SQLException | RuntimeException e) {
                 conn.rollback();
                 throw e;
             } finally {
                 conn.setAutoCommit(true);
             }
         }
+    }
+
+    private static void validateClaimArguments(UUID eventId, String workerId, UUID claimToken) {
+        if (eventId == null) {
+            throw new IllegalArgumentException("eventId must not be null");
+        }
+        if (workerId == null || workerId.isBlank()) {
+            throw new IllegalArgumentException("workerId must not be null or blank");
+        }
+        if (claimToken == null) {
+            throw new IllegalArgumentException("claimToken must not be null");
+        }
+    }
+
+    private static boolean isCurrentClaim(OutboxEvent event, String workerId, UUID claimToken) {
+        return event.status() == EventStatus.CLAIMED
+            && Objects.equals(event.claimedBy(), workerId)
+            && Objects.equals(event.claimToken(), claimToken);
     }
 
     private OutboxEvent mapEvent(ResultSet rs) throws SQLException {
@@ -295,6 +367,7 @@ public class OutboxRepository {
             EventStatus.valueOf(rs.getString("status")),
             rs.getInt("retry_count"),
             rs.getString("claimed_by"),
+            (UUID) rs.getObject("claim_token"),
             rs.getTimestamp("lease_expires_at") == null
                 ? null
                 : rs.getTimestamp("lease_expires_at").toInstant(),

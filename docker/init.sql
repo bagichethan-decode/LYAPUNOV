@@ -8,11 +8,16 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     retry_count INT NOT NULL DEFAULT 0,
     claimed_by VARCHAR(255),
+    claim_token UUID,
     lease_expires_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_aggregate_sequence UNIQUE (aggregate_type, aggregate_id, sequence_number)
 );
+
+-- Safe for databases created before claim-token fencing was introduced.
+ALTER TABLE outbox_events
+    ADD COLUMN IF NOT EXISTS claim_token UUID;
 
 CREATE INDEX IF NOT EXISTS idx_outbox_polling
 ON outbox_events (created_at)

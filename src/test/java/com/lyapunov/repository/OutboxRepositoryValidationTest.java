@@ -71,11 +71,45 @@ class OutboxRepositoryValidationTest {
 
         assertThrows(
             IllegalArgumentException.class,
-            () -> repository.markPublished(null)
+            () -> repository.markPublished(null, "worker-A", UUID.randomUUID())
         );
         assertThrows(
             IllegalArgumentException.class,
-            () -> repository.recordFailure(null, 3)
+            () -> repository.recordFailure(null, "worker-A", UUID.randomUUID(), 3)
+        );
+    }
+
+    @Test
+    void rejectsNullOrBlankClaimWorkerBeforeDatabaseAccess() {
+        OutboxRepository repository = repositoryWithoutDatabaseAccess();
+        UUID eventId = UUID.randomUUID();
+        UUID claimToken = UUID.randomUUID();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> repository.markPublished(eventId, null, claimToken)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> repository.markPublished(eventId, " ", claimToken)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> repository.recordFailure(eventId, null, claimToken, 3)
+        );
+    }
+
+    @Test
+    void rejectsNullClaimTokenBeforeDatabaseAccess() {
+        OutboxRepository repository = repositoryWithoutDatabaseAccess();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> repository.markPublished(UUID.randomUUID(), "worker-A", null)
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> repository.recordFailure(UUID.randomUUID(), "worker-A", null, 3)
         );
     }
 
@@ -85,11 +119,11 @@ class OutboxRepositoryValidationTest {
 
         assertThrows(
             IllegalArgumentException.class,
-            () -> repository.recordFailure(UUID.randomUUID(), 0)
+            () -> repository.recordFailure(UUID.randomUUID(), "worker-A", UUID.randomUUID(), 0)
         );
         assertThrows(
             IllegalArgumentException.class,
-            () -> repository.recordFailure(UUID.randomUUID(), -1)
+            () -> repository.recordFailure(UUID.randomUUID(), "worker-A", UUID.randomUUID(), -1)
         );
     }
 

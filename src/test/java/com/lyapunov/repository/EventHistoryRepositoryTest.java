@@ -80,6 +80,7 @@ class EventHistoryRepositoryTest {
             OutboxEvent.EventStatus.CLAIMED,
             0,
             "worker-A",
+            UUID.randomUUID(),
             Instant.now().plusSeconds(30),
             Instant.now(),
             Instant.now()

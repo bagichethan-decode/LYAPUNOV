@@ -13,6 +13,7 @@ public record OutboxEvent(
     EventStatus status,
     int retryCount,
     String claimedBy,
+    UUID claimToken,
     Instant leaseExpiresAt,
     Instant createdAt,
     Instant updatedAt
