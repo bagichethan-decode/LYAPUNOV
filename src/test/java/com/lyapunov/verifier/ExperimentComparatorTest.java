@@ -121,4 +121,87 @@ class ExperimentComparatorTest {
 
         assertEquals("UNCHANGED", comparison.outcome());
     }
+    @Test
+    void rejectsComparisonWhenSeedsDiffer() {
+        ExperimentRunner runner = new ExperimentRunner();
+
+        var baseline = runner.run(
+                42L,
+                FaultInjector.FaultType.DROP,
+                10
+        );
+
+        var candidate = runner.run(
+                43L,
+                FaultInjector.FaultType.DROP,
+                10
+        );
+
+        var exception = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> comparator.compare(
+                        baseline, candidate, "baseline", "candidate"
+                )
+        );
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                exception.getMessage().contains("seed")
+        );
+    }
+
+    @Test
+    void rejectsComparisonWhenFaultTypesDiffer() {
+        ExperimentRunner runner = new ExperimentRunner();
+
+        var baseline = runner.run(
+                42L,
+                FaultInjector.FaultType.DROP,
+                10
+        );
+
+        var candidate = runner.run(
+                42L,
+                FaultInjector.FaultType.DUPLICATE,
+                10
+        );
+
+        var exception = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> comparator.compare(
+                        baseline, candidate, "baseline", "candidate"
+                )
+        );
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                exception.getMessage().contains("faultType")
+        );
+    }
+
+    @Test
+    void rejectsComparisonWhenEventCountsDiffer() {
+        ExperimentRunner runner = new ExperimentRunner();
+
+        var baseline = runner.run(
+                42L,
+                FaultInjector.FaultType.DROP,
+                10
+        );
+
+        var candidate = runner.run(
+                42L,
+                FaultInjector.FaultType.DROP,
+                11
+        );
+
+        var exception = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> comparator.compare(
+                        baseline, candidate, "baseline", "candidate"
+                )
+        );
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                exception.getMessage().contains("requestedEventCount")
+        );
+    }
 }

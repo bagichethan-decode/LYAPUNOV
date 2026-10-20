@@ -1,5 +1,8 @@
 package com.lyapunov.verifier;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class ExperimentComparator {
 
     public ExperimentComparison compare(
@@ -8,11 +11,7 @@ public class ExperimentComparator {
             String baselineName,
             String candidateName
     ) {
-        if (baseline == null || candidate == null) {
-            throw new IllegalArgumentException(
-                    "Baseline and candidate experiments are required"
-            );
-        }
+        validateComparableExperiments(baseline, candidate);
 
         int missingDelta =
                 candidate.missingEventIds().size()
@@ -56,5 +55,38 @@ public class ExperimentComparator {
                 orderingDelta,
                 outcome
         );
+    }
+
+    private void validateComparableExperiments(
+            ExperimentRunner.ExperimentResult baseline,
+            ExperimentRunner.ExperimentResult candidate
+    ) {
+        if (baseline == null || candidate == null) {
+            throw new IllegalArgumentException(
+                    "Baseline and candidate experiments are required"
+            );
+        }
+
+        List<String> mismatches = new ArrayList<>();
+
+        if (baseline.seed() != candidate.seed()) {
+            mismatches.add("seed");
+        }
+
+        if (baseline.faultType() != candidate.faultType()) {
+            mismatches.add("faultType");
+        }
+
+        if (baseline.requestedEventCount()
+                != candidate.requestedEventCount()) {
+            mismatches.add("requestedEventCount");
+        }
+
+        if (!mismatches.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Cannot compare experiments with different parameters: "
+                    + String.join(", ", mismatches)
+            );
+        }
     }
 }
