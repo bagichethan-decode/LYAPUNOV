@@ -4,11 +4,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.stream.IntStream;
 
 public class ExperimentRunner {
@@ -35,6 +38,12 @@ public class ExperimentRunner {
             FaultInjector.FaultType faultType,
             int eventCount
     ) {
+        if (faultType == null) {
+            throw new IllegalArgumentException(
+                    "faultType must not be null"
+            );
+        }
+
         if (eventCount < 2) {
             throw new IllegalArgumentException(
                     "At least two events are required"
@@ -87,24 +96,79 @@ public class ExperimentRunner {
             Path outputDirectory
     ) throws IOException {
 
+        if (result == null) {
+            throw new IllegalArgumentException(
+                    "result must not be null"
+            );
+        }
+
+        if (outputDirectory == null) {
+            throw new IllegalArgumentException(
+                    "outputDirectory must not be null"
+            );
+        }
+
         Files.createDirectories(outputDirectory);
 
         String filename = String.format(
                 Locale.ROOT,
-                "experiment-%s-seed-%d-%d.json",
+                "experiment-%s-seed-%d-%d-%s.json",
                 result.faultType().name().toLowerCase(Locale.ROOT),
                 result.seed(),
-                System.currentTimeMillis()
+                System.currentTimeMillis(),
+                UUID.randomUUID()
         );
 
         Path outputFile = outputDirectory.resolve(filename);
+        Path temporaryFile = Files.createTempFile(
+                outputDirectory,
+                ".experiment-report-",
+                ".tmp"
+        );
 
         ObjectMapper mapper = new ObjectMapper()
                 .enable(SerializationFeature.INDENT_OUTPUT);
 
-        mapper.writeValue(outputFile.toFile(), result);
+        boolean published = false;
 
-        return outputFile;
+        try {
+            // Write to a temporary file rather than exposing a partial report.
+            mapper.writeValue(temporaryFile.toFile(), result);
+
+            // Parse the file back into the same model and verify its contents.
+            ExperimentResult validated = mapper.readValue(
+                    temporaryFile.toFile(),
+                    ExperimentResult.class
+            );
+
+            if (!result.equals(validated)) {
+                throw new IOException(
+                        "Written experiment report failed round-trip validation"
+                );
+            }
+
+            // Publish only after JSON parsing and round-trip validation succeed.
+            try {
+                Files.move(
+                        temporaryFile,
+                        outputFile,
+                        StandardCopyOption.ATOMIC_MOVE
+                );
+            } catch (AtomicMoveNotSupportedException exception) {
+                // Keep the temporary file in the same directory to avoid
+                // crossing filesystems when the atomic operation is unavailable.
+                Files.move(temporaryFile, outputFile);
+            }
+
+            published = true;
+            return outputFile;
+
+        } finally {
+            // Remove incomplete temporary output on every unsuccessful path.
+            if (!published) {
+                Files.deleteIfExists(temporaryFile);
+            }
+        }
     }
 
     public static void main(String[] args) {
