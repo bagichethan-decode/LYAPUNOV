@@ -16,7 +16,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
   kafka:
     image: apache/kafka:3.7.0
     container_name: lyapunov-kafka
