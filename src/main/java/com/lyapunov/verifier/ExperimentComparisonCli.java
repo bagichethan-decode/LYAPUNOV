@@ -50,21 +50,45 @@ public class ExperimentComparisonCli {
     }
 
     public static void main(String[] args) {
-        boolean failOnRegression =
-                args.length == 3
-                && "--fail-on-regression".equals(args[2]);
-
-        if (args.length != 2 && !failOnRegression) {
-            System.err.println(
-                    "Usage: ExperimentComparisonCli "
-                    + "<baseline-report.json> "
-                    + "<candidate-report.json> "
-                    + "[--fail-on-regression]"
-            );
+        if (args.length < 2) {
+            printUsage();
             System.exit(2);
+            return;
         }
 
+        int maxMissing = 0;
+        int maxDuplicates = 0;
+        int maxOrdering = 0;
+        boolean failOnRegression = false;
+
         try {
+            for (int i = 2; i < args.length; i++) {
+                switch (args[i]) {
+                    case "--fail-on-regression" ->
+                            failOnRegression = true;
+
+                    case "--max-missing" ->
+                            maxMissing = parseThreshold(args, ++i, "--max-missing");
+
+                    case "--max-duplicates" ->
+                            maxDuplicates = parseThreshold(args, ++i, "--max-duplicates");
+
+                    case "--max-ordering" ->
+                            maxOrdering = parseThreshold(args, ++i, "--max-ordering");
+
+                    default -> throw new IllegalArgumentException(
+                            "Unknown option: " + args[i]
+                    );
+                }
+            }
+
+            if ((maxMissing > 0 || maxDuplicates > 0 || maxOrdering > 0)
+                    && !failOnRegression) {
+                throw new IllegalArgumentException(
+                        "Threshold options require --fail-on-regression"
+                );
+            }
+
             ExperimentComparisonCli cli =
                     new ExperimentComparisonCli();
 
@@ -89,17 +113,23 @@ public class ExperimentComparisonCli {
                     + comparison.outcome());
 
             if (failOnRegression) {
-                RegressionGate gate =
-                        new RegressionGate(0, 0, 0);
+                RegressionGate gate = new RegressionGate(
+                        maxMissing,
+                        maxDuplicates,
+                        maxOrdering
+                );
 
                 RegressionDecision decision =
                         gate.evaluate(comparison);
 
-                System.out.println("Regression gate       : "
+                System.out.println("Maximum missing increase   : " + maxMissing);
+                System.out.println("Maximum duplicate increase : " + maxDuplicates);
+                System.out.println("Maximum ordering increase  : " + maxOrdering);
+                System.out.println("Regression gate            : "
                         + (decision.passed() ? "PASS" : "FAIL"));
 
                 for (String violation : decision.violations()) {
-                    System.out.println("Violation             : "
+                    System.out.println("Violation                  : "
                             + violation);
                 }
 
@@ -112,7 +142,50 @@ public class ExperimentComparisonCli {
             System.err.println(
                     "Comparison failed: " + e.getMessage()
             );
-            System.exit(1);
+            printUsage();
+            System.exit(2);
         }
+    }
+
+    static int parseThreshold(
+            String[] args,
+            int index,
+            String option
+    ) {
+        if (index >= args.length) {
+            throw new IllegalArgumentException(
+                    "Missing integer value for " + option
+            );
+        }
+
+        final int value;
+
+        try {
+            value = Integer.parseInt(args[index]);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    "Threshold for " + option + " must be an integer"
+            );
+        }
+
+        if (value < 0) {
+            throw new IllegalArgumentException(
+                    "Threshold for " + option + " cannot be negative"
+            );
+        }
+
+        return value;
+    }
+
+    private static void printUsage() {
+        System.err.println(
+                "Usage: ExperimentComparisonCli "
+                + "<baseline-report.json> "
+                + "<candidate-report.json> "
+                + "[--fail-on-regression] "
+                + "[--max-missing N] "
+                + "[--max-duplicates N] "
+                + "[--max-ordering N]"
+        );
     }
 }
