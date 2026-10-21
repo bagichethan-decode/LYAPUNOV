@@ -3,8 +3,12 @@ package com.lyapunov.verifier;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Instant;
+import java.util.List;
 
 public class ExperimentComparisonCli {
 
@@ -49,6 +53,72 @@ public class ExperimentComparisonCli {
         );
     }
 
+    public void writeReportAtomically(
+            Path reportPath,
+            ComparisonReport report
+    ) throws IOException {
+
+        Path absolutePath = reportPath.toAbsolutePath();
+        Path parent = absolutePath.getParent();
+
+        if (parent == null) {
+            throw new IOException(
+                    "Cannot determine report directory: " + reportPath
+            );
+        }
+
+        Files.createDirectories(parent);
+
+        Path temporaryFile = Files.createTempFile(
+                parent,
+                "lyapunov-comparison-",
+                ".tmp"
+        );
+
+        try {
+            mapper.writerWithDefaultPrettyPrinter()
+                    .writeValue(temporaryFile.toFile(), report);
+
+            try {
+                Files.move(
+                        temporaryFile,
+                        absolutePath,
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING
+                );
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(
+                        temporaryFile,
+                        absolutePath,
+                        StandardCopyOption.REPLACE_EXISTING
+                );
+            }
+        } finally {
+            Files.deleteIfExists(temporaryFile);
+        }
+    }
+
+    public record ComparisonReport(
+            int schemaVersion,
+            String generatedAt,
+            ExperimentComparison comparison,
+            boolean regressionGateEnabled,
+            RegressionThresholds thresholds,
+            Boolean regressionPassed,
+            List<String> violations
+    ) {
+        public ComparisonReport {
+            violations = List.copyOf(violations);
+        }
+    }
+
+    public record RegressionThresholds(
+            int maxMissingIncrease,
+            int maxDuplicateIncrease,
+            int maxOrderingIncrease
+    ) {
+    }
+
     public static void main(String[] args) {
         if (args.length < 2) {
             printUsage();
@@ -59,7 +129,9 @@ public class ExperimentComparisonCli {
         int maxMissing = 0;
         int maxDuplicates = 0;
         int maxOrdering = 0;
+
         boolean failOnRegression = false;
+        Path jsonReportPath = null;
 
         try {
             for (int i = 2; i < args.length; i++) {
@@ -68,13 +140,36 @@ public class ExperimentComparisonCli {
                             failOnRegression = true;
 
                     case "--max-missing" ->
-                            maxMissing = parseThreshold(args, ++i, "--max-missing");
+                            maxMissing = parseThreshold(
+                                    args,
+                                    ++i,
+                                    "--max-missing"
+                            );
 
                     case "--max-duplicates" ->
-                            maxDuplicates = parseThreshold(args, ++i, "--max-duplicates");
+                            maxDuplicates = parseThreshold(
+                                    args,
+                                    ++i,
+                                    "--max-duplicates"
+                            );
 
                     case "--max-ordering" ->
-                            maxOrdering = parseThreshold(args, ++i, "--max-ordering");
+                            maxOrdering = parseThreshold(
+                                    args,
+                                    ++i,
+                                    "--max-ordering"
+                            );
+
+                    case "--json-report" -> {
+                        if (i + 1 >= args.length
+                                || args[i + 1].isBlank()) {
+                            throw new IllegalArgumentException(
+                                    "Missing file path for --json-report"
+                            );
+                        }
+
+                        jsonReportPath = Path.of(args[++i]);
+                    }
 
                     default -> throw new IllegalArgumentException(
                             "Unknown option: " + args[i]
@@ -82,7 +177,9 @@ public class ExperimentComparisonCli {
                 }
             }
 
-            if ((maxMissing > 0 || maxDuplicates > 0 || maxOrdering > 0)
+            if ((maxMissing > 0
+                    || maxDuplicates > 0
+                    || maxOrdering > 0)
                     && !failOnRegression) {
                 throw new IllegalArgumentException(
                         "Threshold options require --fail-on-regression"
@@ -112,6 +209,8 @@ public class ExperimentComparisonCli {
             System.out.println("Outcome               : "
                     + comparison.outcome());
 
+            RegressionDecision decision = null;
+
             if (failOnRegression) {
                 RegressionGate gate = new RegressionGate(
                         maxMissing,
@@ -119,12 +218,14 @@ public class ExperimentComparisonCli {
                         maxOrdering
                 );
 
-                RegressionDecision decision =
-                        gate.evaluate(comparison);
+                decision = gate.evaluate(comparison);
 
-                System.out.println("Maximum missing increase   : " + maxMissing);
-                System.out.println("Maximum duplicate increase : " + maxDuplicates);
-                System.out.println("Maximum ordering increase  : " + maxOrdering);
+                System.out.println("Maximum missing increase   : "
+                        + maxMissing);
+                System.out.println("Maximum duplicate increase : "
+                        + maxDuplicates);
+                System.out.println("Maximum ordering increase  : "
+                        + maxOrdering);
                 System.out.println("Regression gate            : "
                         + (decision.passed() ? "PASS" : "FAIL"));
 
@@ -132,17 +233,39 @@ public class ExperimentComparisonCli {
                     System.out.println("Violation                  : "
                             + violation);
                 }
+            }
 
-                if (!decision.passed()) {
-                    System.exit(1);
-                }
+            if (jsonReportPath != null) {
+                ComparisonReport report = new ComparisonReport(
+                        1,
+                        Instant.now().toString(),
+                        comparison,
+                        failOnRegression,
+                        new RegressionThresholds(
+                                maxMissing,
+                                maxDuplicates,
+                                maxOrdering
+                        ),
+                        decision == null ? null : decision.passed(),
+                        decision == null
+                                ? List.of()
+                                : decision.violations()
+                );
+
+                cli.writeReportAtomically(jsonReportPath, report);
+
+                System.out.println("JSON report               : "
+                        + jsonReportPath.toAbsolutePath());
+            }
+
+            if (decision != null && !decision.passed()) {
+                System.exit(1);
             }
 
         } catch (IOException | IllegalArgumentException e) {
             System.err.println(
                     "Comparison failed: " + e.getMessage()
             );
-            printUsage();
             System.exit(2);
         }
     }
@@ -164,13 +287,15 @@ public class ExperimentComparisonCli {
             value = Integer.parseInt(args[index]);
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(
-                    "Threshold for " + option + " must be an integer"
+                    "Threshold for " + option
+                    + " must be an integer"
             );
         }
 
         if (value < 0) {
             throw new IllegalArgumentException(
-                    "Threshold for " + option + " cannot be negative"
+                    "Threshold for " + option
+                    + " cannot be negative"
             );
         }
 
@@ -185,7 +310,8 @@ public class ExperimentComparisonCli {
                 + "[--fail-on-regression] "
                 + "[--max-missing N] "
                 + "[--max-duplicates N] "
-                + "[--max-ordering N]"
+                + "[--max-ordering N] "
+                + "[--json-report PATH]"
         );
     }
 }
