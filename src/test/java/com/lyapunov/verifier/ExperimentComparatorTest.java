@@ -11,28 +11,29 @@ class ExperimentComparatorTest {
     private final ExperimentComparator comparator =
             new ExperimentComparator();
 
-    private ExperimentRunner.ExperimentResult result(
-            List<String> missing,
-            List<String> duplicates,
-            List<String> ordering
-    ) {
-        return new ExperimentRunner.ExperimentResult(
-                "LYAPUNOV",
-                42L,
-                FaultInjector.FaultType.REORDER,
-                10,
-                "2026-10-10T10:00:00Z",
-                10,
-                10,
-                missing,
-                duplicates,
-                ordering,
-                missing.isEmpty()
-                        && duplicates.isEmpty()
-                        && ordering.isEmpty()
-        );
-    }
-
+   private ExperimentRunner.ExperimentResult result(
+        List<String> missing,
+        List<String> duplicates,
+        List<String> ordering
+) {
+    return new ExperimentRunner.ExperimentResult(
+            "LYAPUNOV",
+            1,
+            "test-revision",
+            42L,
+            FaultInjector.FaultType.REORDER,
+            10,
+            "2026-10-10T10:00:00Z",
+            10,
+            10,
+            missing,
+            duplicates,
+            ordering,
+            missing.isEmpty()
+                    && duplicates.isEmpty()
+                    && ordering.isEmpty()
+    );
+}
     @Test
     void detectsImprovement() {
         var baseline = result(
