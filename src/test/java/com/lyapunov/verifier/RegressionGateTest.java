@@ -85,4 +85,28 @@ class RegressionGateTest {
                 () -> strictGate.evaluate(null)
         );
     }
+
+    @Test
+    void passesWhenMetricIncreaseEqualsConfiguredThreshold() {
+        var gate = new RegressionGate(1, 2, 3);
+
+        var decision = gate.evaluate(
+                comparison(1, 2, 3)
+        );
+
+        assertTrue(decision.passed());
+        assertTrue(decision.violations().isEmpty());
+    }
+
+    @Test
+    void failsWhenMetricExceedsThresholdByOne() {
+        var gate = new RegressionGate(1, 2, 3);
+
+        var decision = gate.evaluate(
+                comparison(2, 3, 4)
+        );
+
+        assertFalse(decision.passed());
+        assertEquals(3, decision.violations().size());
+    }
 }
