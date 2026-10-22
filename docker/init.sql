@@ -49,3 +49,8 @@ ON event_history (
     sequence_number,
     occurred_at
 );
+
+-- Supports ordered polling of pending and potentially reclaimable events.
+CREATE INDEX IF NOT EXISTS idx_outbox_claim_order
+ON outbox_events (created_at, aggregate_type, aggregate_id, sequence_number)
+WHERE status IN ('PENDING', 'CLAIMED');
