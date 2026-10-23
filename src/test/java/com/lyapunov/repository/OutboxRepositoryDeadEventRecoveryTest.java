@@ -135,6 +135,18 @@ class OutboxRepositoryDeadEventRecoveryTest {
     }
 
     @Test
+    void operatorRetryPreservesJsonSpecialCharactersInAuditReason() throws Exception {
+        UUID eventId = insertEvent("order-retry-json", 1);
+        OutboxEvent claim = claimOnly("worker-A");
+        assertTrue(repository.recordFailure(eventId, "worker-A", claim.claimToken(), 1));
+
+        String reason = "quote \" slash \\ backspace \b formfeed \f newline \n carriage \r tab \t control \u0001";
+        repository.retryDeadEvent(eventId, "operator-7", reason);
+
+        assertEquals(reason, historyReason("EVENT_RETRIED"));
+    }
+
+    @Test
     void operatorCanSkipDeadEventToUnblockLaterSequence() throws Exception {
         UUID firstId = insertEvent("order-skip", 1);
         insertEvent("order-skip", 2);
@@ -223,6 +235,18 @@ class OutboxRepositoryDeadEventRecoveryTest {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement stmt = conn.prepareStatement(
                  "SELECT details::text FROM event_history WHERE action = ?")) {
+            stmt.setString(1, action);
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertTrue(rs.next());
+                return rs.getString(1);
+            }
+        }
+    }
+
+    private static String historyReason(String action) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(
+                 "SELECT details ->> 'reason' FROM event_history WHERE action = ?")) {
             stmt.setString(1, action);
             try (ResultSet rs = stmt.executeQuery()) {
                 assertTrue(rs.next());
