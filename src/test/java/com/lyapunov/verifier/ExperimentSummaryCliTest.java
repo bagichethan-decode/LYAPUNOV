@@ -117,4 +117,18 @@ class ExperimentSummaryCliTest {
         assertTrue(text.contains("Invalid reports      : 1"));
         assertTrue(text.contains("Unsupported faultType: UNKNOWN"));
     }
+
+    @Test
+    void rejectsReportWhoseReliableFlagContradictsItsViolations()
+            throws Exception {
+        String inconsistent = validReport()
+                .replace("\"reliable\": false", "\"reliable\": true");
+
+        writeReport("inconsistent.json", inconsistent);
+
+        String text = runCli();
+
+        assertTrue(text.contains("Invalid reports      : 1"));
+        assertTrue(text.contains("reliable does not match"));
+    }
 }
