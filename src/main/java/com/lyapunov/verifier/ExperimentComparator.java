@@ -11,6 +11,7 @@ public class ExperimentComparator {
             String baselineName,
             String candidateName
     ) {
+        validateReportNames(baselineName, candidateName);
         validateComparableExperiments(baseline, candidate);
 
         int missingDelta =
@@ -57,6 +58,22 @@ public class ExperimentComparator {
         );
     }
 
+    private void validateReportNames(
+            String baselineName,
+            String candidateName
+    ) {
+        if (baselineName == null || baselineName.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Baseline report name must not be null or blank"
+            );
+        }
+
+        if (candidateName == null || candidateName.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Candidate report name must not be null or blank"
+            );
+        }
+    }
     private void validateComparableExperiments(
             ExperimentRunner.ExperimentResult baseline,
             ExperimentRunner.ExperimentResult candidate

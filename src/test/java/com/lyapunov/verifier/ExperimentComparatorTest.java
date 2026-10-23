@@ -205,4 +205,36 @@ class ExperimentComparatorTest {
                 exception.getMessage().contains("requestedEventCount")
         );
     }
+
+    @Test
+    void rejectsBlankBaselineReportName() {
+        var runner = new ExperimentRunner();
+        var result = runner.run(42L, FaultInjector.FaultType.DROP, 10);
+
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> comparator.compare(result, result, "  ", "candidate")
+        );
+
+        assertEquals(
+                "Baseline report name must not be null or blank",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    void rejectsBlankCandidateReportName() {
+        var runner = new ExperimentRunner();
+        var result = runner.run(42L, FaultInjector.FaultType.DROP, 10);
+
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> comparator.compare(result, result, "baseline", null)
+        );
+
+        assertEquals(
+                "Candidate report name must not be null or blank",
+                exception.getMessage()
+        );
+    }
 }
