@@ -34,4 +34,42 @@ class RegressionDecisionTest {
                 () -> new RegressionDecision(true, null)
         );
     }
+
+    @Test
+    void rejectsPassedDecisionWithViolations() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new RegressionDecision(
+                        true,
+                        List.of("Missing events increased")
+                )
+        );
+    }
+
+    @Test
+    void rejectsFailedDecisionWithoutViolations() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new RegressionDecision(false, List.of())
+        );
+    }
+
+    @Test
+    void acceptsPassedDecisionWithoutViolations() {
+        var decision = new RegressionDecision(true, List.of());
+
+        assertTrue(decision.passed());
+        assertTrue(decision.violations().isEmpty());
+    }
+
+    @Test
+    void acceptsFailedDecisionWithViolations() {
+        var decision = new RegressionDecision(
+                false,
+                List.of("Missing events increased")
+        );
+
+        assertFalse(decision.passed());
+        assertEquals(1, decision.violations().size());
+    }
 }
