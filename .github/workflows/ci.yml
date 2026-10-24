@@ -1,5 +1,4 @@
 name: LYAPUNOV CI
-
 on:
   push:
     branches:
