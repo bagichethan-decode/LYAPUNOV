@@ -123,9 +123,18 @@ public class ExperimentSummaryCli {
         requiredText(root, "project");
         requiredText(root, "executedAt");
 
+        boolean calculatedReliable =
+                missing == 0 && duplicates == 0 && ordering == 0;
+
+        if (reliableNode.booleanValue() != calculatedReliable) {
+            throw new IllegalArgumentException(
+                    "reliable does not match the reported event violations"
+            );
+        }
+
         return new ReportSummary(
                 faultType,
-                reliableNode.booleanValue(),
+                calculatedReliable,
                 missing,
                 duplicates,
                 ordering
