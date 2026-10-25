@@ -131,4 +131,70 @@ class ExperimentSummaryCliTest {
         assertTrue(text.contains("Invalid reports      : 1"));
         assertTrue(text.contains("reliable does not match"));
     }
+    
+    @Test
+    void rejectsNegativeEventCounts() throws Exception {
+        String invalid = validReport()
+                .replace("\"expectedCount\": 10", "\"expectedCount\": -1");
+
+        writeReport("negative-count.json", invalid);
+
+        String text = runCli();
+
+        assertTrue(text.contains("Invalid reports      : 1"));
+        assertTrue(text.contains("negative-count.json"));
+    }
+
+    @Test
+    void rejectsDecimalValuesForIntegerFields() throws Exception {
+        String invalid = validReport()
+                .replace("\"expectedCount\": 10", "\"expectedCount\": 10.5");
+
+        writeReport("decimal-count.json", invalid);
+
+        String text = runCli();
+
+        assertTrue(text.contains("Invalid reports      : 1"));
+        assertTrue(text.contains("decimal-count.json"));
+    }
+
+    @Test
+    void rejectsStringValuesForIntegerFields() throws Exception {
+        String invalid = validReport()
+                .replace("\"expectedCount\": 10", "\"expectedCount\": \"10\"");
+
+        writeReport("string-count.json", invalid);
+
+        String text = runCli();
+
+        assertTrue(text.contains("Invalid reports      : 1"));
+        assertTrue(text.contains("string-count.json"));
+    }
+
+    @Test
+    void rejectsIntegerValuesOutsideIntRange() throws Exception {
+        String invalid = validReport()
+                .replace("\"expectedCount\": 10",
+                        "\"expectedCount\": 2147483648");
+
+        writeReport("out-of-range-count.json", invalid);
+
+        String text = runCli();
+
+        assertTrue(text.contains("Invalid reports      : 1"));
+        assertTrue(text.contains("out-of-range-count.json"));
+    }
+
+    @Test
+    void rejectsMissingNumericFields() throws Exception {
+        String invalid = validReport()
+                .replace("\"expectedCount\": 10,\n", "");
+
+        writeReport("missing-count.json", invalid);
+
+        String text = runCli();
+
+        assertTrue(text.contains("Invalid reports      : 1"));
+        assertTrue(text.contains("missing-count.json"));
+    }
 }
