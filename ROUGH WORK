@@ -1,1 +1,42 @@
-LYAPUNOV 
+LYAPUNOV Development history
+
+05–08 Oct
+Phase 1
+
+Project foundation and infrastructure
+- Created the Java/Maven project structure and Maven Wrapper.
+- Configured Docker Compose with PostgreSQL and Kafka.
+- Created the Kafka topic and verified message production and consumption.
+- Started implementing the transactional outbox.
+
+
+
+13 Oct
+Phase 2
+
+Reliable event processing
+- Worked on PostgreSQL outbox event claiming.
+- Developed per-aggregate event ordering safeguards.
+- Improved how pending events are selected for processing.
+
+
+
+19–22 Oct
+Phase 3
+
+Fault tolerance and regression testing
+- Worked on dead-event recovery and stale-worker fencing.
+- Added validation for experiment reports and their numeric fields.
+- Built fault-injection, replay, experiment-comparison and regression-gate capabilities.
+- Improved ordered event claiming and database indexing.
+
+
+
+25 Oct
+Phase 4
+
+Validation and unexpected-event detection
+- Added validation coverage for experiment-report data.
+- Implemented UnexpectedEventDetector to identify observed event IDs absent from the expected set.
+- Added five unit tests for the detector.
+- Achieved 83 passing tests, zero failures, and pushed commit 8390c34 to GitHub.
