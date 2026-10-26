@@ -18,7 +18,7 @@ import java.util.stream.IntStream;
 
 public class ExperimentRunner {
 
-    private static final int REPORT_SCHEMA_VERSION = 1;
+    private static final int REPORT_SCHEMA_VERSION = 2;
 
     private final EventVerifier verifier = new EventVerifier();
     private final FaultInjector injector = new FaultInjector();
@@ -36,6 +36,7 @@ public class ExperimentRunner {
             List<String> missingEventIds,
             List<String> duplicateEventIds,
             List<String> orderingViolations,
+            List<String> unexpectedEventIds,
             boolean reliable
     ) {}
 
@@ -95,6 +96,7 @@ public class ExperimentRunner {
                 report.missingEventIds(),
                 report.duplicateEventIds(),
                 report.orderingViolations(),
+                report.unexpectedEventIds(),
                 report.isReliable()
         );
     }

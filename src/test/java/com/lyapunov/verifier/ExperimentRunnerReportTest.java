@@ -101,4 +101,42 @@ class ExperimentRunnerReportTest {
                 () -> runner.writeJsonReport(result, null)
         );
     }
+    
+    @Test
+    void preservesUnexpectedEventIdsInJsonReport() throws Exception {
+
+        ExperimentRunner.ExperimentResult original = runner.run(
+                42L,
+                FaultInjector.FaultType.DROP,
+                10
+        );
+
+        ObjectMapper mapper = new ObjectMapper();
+
+        var json = mapper.valueToTree(original);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) json)
+                .putPOJO(
+                        "unexpectedEventIds",
+                        List.of("unexpected-001", "unexpected-002")
+                );
+
+        ExperimentRunner.ExperimentResult result = mapper.treeToValue(
+                json,
+                ExperimentRunner.ExperimentResult.class
+        );
+
+        Path report = runner.writeJsonReport(result, tempDir);
+
+        ExperimentRunner.ExperimentResult restored = mapper.readValue(
+                report.toFile(),
+                ExperimentRunner.ExperimentResult.class
+        );
+
+        assertEquals(
+                List.of("unexpected-001", "unexpected-002"),
+                restored.unexpectedEventIds()
+        );
+
+        assertEquals(result, restored);
+    }
 }
