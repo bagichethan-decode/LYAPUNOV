@@ -3,6 +3,7 @@ package com.lyapunov.verifier;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -14,9 +15,24 @@ public class EventVerifier {
         List<ObservedEvent> observed
     ) {
         Set<String> observedIds = new HashSet<>();
+        Set<String> expectedIds = new HashSet<>();
 
         List<String> missing = new ArrayList<>();
         List<String> duplicates = new ArrayList<>();
+
+        // Collect all expected event IDs.
+        for (ExpectedEvent event : expected) {
+            expectedIds.add(event.eventId());
+        }
+
+        // Detect unexpected events while preserving their encounter order.
+        Set<String> unexpected = new LinkedHashSet<>();
+
+        for (ObservedEvent event : observed) {
+            if (!expectedIds.contains(event.eventId())) {
+                unexpected.add(event.eventId());
+            }
+        }
 
         // Detect duplicate deliveries by event ID.
         for (ObservedEvent event : observed) {
@@ -41,7 +57,8 @@ public class EventVerifier {
             observed.size(),
             missing,
             duplicates,
-            orderingViolations
+            orderingViolations,
+            new ArrayList<>(unexpected)
         );
     }
 
@@ -128,8 +145,7 @@ public class EventVerifier {
         return violations;
     }
 
-    // A structured key prevents different aggregates from colliding
-    // when their type or ID contains a colon.
+    // Structured keys prevent collisions between aggregate types and IDs.
     private record AggregateKey(
         String aggregateType,
         String aggregateId

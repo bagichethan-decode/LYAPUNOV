@@ -9,155 +9,209 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EventVerifierTest {
+private final EventVerifier verifier = new EventVerifier();
 
-    private final EventVerifier verifier = new EventVerifier();
+@Test
+void detectsMissingDuplicateAndOutOfOrderEvents() {
 
-    @Test
-    void detectsMissingDuplicateAndOutOfOrderEvents() {
+    List<EventVerifier.ExpectedEvent> expected = List.of(
+        new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2),
+        new EventVerifier.ExpectedEvent("e3", "Order", "order-1", 3),
+        new EventVerifier.ExpectedEvent("e4", "Order", "order-1", 4)
+    );
 
-        List<EventVerifier.ExpectedEvent> expected = List.of(
-            new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
-            new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2),
-            new EventVerifier.ExpectedEvent("e3", "Order", "order-1", 3),
-            new EventVerifier.ExpectedEvent("e4", "Order", "order-1", 4)
-        );
+    List<EventVerifier.ObservedEvent> observed = List.of(
+        new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ObservedEvent("e3", "Order", "order-1", 3),
+        new EventVerifier.ObservedEvent("e3", "Order", "order-1", 3),
+        new EventVerifier.ObservedEvent("e2", "Order", "order-1", 2)
+    );
 
-        List<EventVerifier.ObservedEvent> observed = List.of(
-            new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
-            new EventVerifier.ObservedEvent("e3", "Order", "order-1", 3),
-            new EventVerifier.ObservedEvent("e3", "Order", "order-1", 3),
-            new EventVerifier.ObservedEvent("e2", "Order", "order-1", 2)
-        );
+    ReliabilityReport report = verifier.verify(expected, observed);
 
-        ReliabilityReport report = verifier.verify(expected, observed);
+    assertEquals(4, report.expectedCount());
+    assertEquals(4, report.observedCount());
+    assertEquals(List.of("e4"), report.missingEventIds());
+    assertEquals(List.of("e3"), report.duplicateEventIds());
+    assertTrue(report.unexpectedEventIds().isEmpty());
 
-        assertEquals(4, report.expectedCount());
-        assertEquals(4, report.observedCount());
+    assertEquals(
+        1,
+        report.orderingViolations().size(),
+        "The sequence 3 followed by 2 must be detected as out of order"
+    );
 
-        assertEquals(List.of("e4"), report.missingEventIds());
-        assertEquals(List.of("e3"), report.duplicateEventIds());
+    assertFalse(report.isReliable());
+}
 
-        assertEquals(
-            1,
-            report.orderingViolations().size(),
-            "The sequence 3 followed by 2 must be detected as out of order"
-        );
+@Test
+void detectsPerAggregateOrderingViolation() {
 
-        assertFalse(report.isReliable());
-    }
+    List<EventVerifier.ExpectedEvent> expected = List.of(
+        new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2),
+        new EventVerifier.ExpectedEvent("e3", "Order", "order-1", 3)
+    );
 
-    @Test
-    void detectsPerAggregateOrderingViolation() {
+    List<EventVerifier.ObservedEvent> observed = List.of(
+        new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ObservedEvent("e3", "Order", "order-1", 3),
+        new EventVerifier.ObservedEvent("e2", "Order", "order-1", 2)
+    );
 
-        List<EventVerifier.ExpectedEvent> expected = List.of(
-            new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
-            new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2),
-            new EventVerifier.ExpectedEvent("e3", "Order", "order-1", 3)
-        );
+    ReliabilityReport report = verifier.verify(expected, observed);
 
-        List<EventVerifier.ObservedEvent> observed = List.of(
-            new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
-            new EventVerifier.ObservedEvent("e3", "Order", "order-1", 3),
-            new EventVerifier.ObservedEvent("e2", "Order", "order-1", 2)
-        );
+    assertEquals(1, report.orderingViolations().size());
+    assertTrue(report.orderingViolations().get(0).contains("order-1"));
+    assertFalse(report.isReliable());
+}
 
-        ReliabilityReport report = verifier.verify(expected, observed);
+@Test
+void passesWhenStreamIsReliable() {
 
-        assertEquals(1, report.orderingViolations().size());
-        assertTrue(report.orderingViolations().get(0).contains("order-1"));
-        assertFalse(report.isReliable());
-    }
+    List<EventVerifier.ExpectedEvent> expected = List.of(
+        new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2),
+        new EventVerifier.ExpectedEvent("e3", "Order", "order-1", 3)
+    );
 
-    @Test
-    void passesWhenStreamIsReliable() {
+    List<EventVerifier.ObservedEvent> observed = List.of(
+        new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ObservedEvent("e2", "Order", "order-1", 2),
+        new EventVerifier.ObservedEvent("e3", "Order", "order-1", 3)
+    );
 
-        List<EventVerifier.ExpectedEvent> expected = List.of(
-            new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
-            new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2),
-            new EventVerifier.ExpectedEvent("e3", "Order", "order-1", 3)
-        );
+    ReliabilityReport report = verifier.verify(expected, observed);
 
-        List<EventVerifier.ObservedEvent> observed = List.of(
-            new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
-            new EventVerifier.ObservedEvent("e2", "Order", "order-1", 2),
-            new EventVerifier.ObservedEvent("e3", "Order", "order-1", 3)
-        );
+    assertTrue(report.missingEventIds().isEmpty());
+    assertTrue(report.duplicateEventIds().isEmpty());
+    assertTrue(report.orderingViolations().isEmpty());
+    assertTrue(report.unexpectedEventIds().isEmpty());
+    assertTrue(report.isReliable());
+}
 
-        ReliabilityReport report = verifier.verify(expected, observed);
+@Test
+void detectsDifferentEventsWithSameSequenceNumber() {
 
-        assertTrue(report.missingEventIds().isEmpty());
-        assertTrue(report.duplicateEventIds().isEmpty());
-        assertTrue(report.orderingViolations().isEmpty());
-        assertTrue(report.isReliable());
-    }
+    List<EventVerifier.ExpectedEvent> expected = List.of(
+        new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2)
+    );
 
-    @Test
-    void detectsDifferentEventsWithSameSequenceNumber() {
+    List<EventVerifier.ObservedEvent> observed = List.of(
+        new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ObservedEvent("e2", "Order", "order-1", 1)
+    );
 
-        List<EventVerifier.ExpectedEvent> expected = List.of(
-            new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
-            new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2)
-        );
+    ReliabilityReport report = verifier.verify(expected, observed);
 
-        List<EventVerifier.ObservedEvent> observed = List.of(
-            new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
-            new EventVerifier.ObservedEvent("e2", "Order", "order-1", 1)
-        );
+    assertEquals(
+        1,
+        report.orderingViolations().size(),
+        "Different events cannot occupy the same sequence position"
+    );
 
-        ReliabilityReport report = verifier.verify(expected, observed);
+    assertFalse(report.isReliable());
+}
 
-        assertEquals(
-            1,
-            report.orderingViolations().size(),
-            "Different events cannot occupy the same sequence position"
-        );
+@Test
+void doesNotMergeAggregatesWhenIdentifiersContainColons() {
 
-        assertFalse(report.isReliable());
-    }
+    List<EventVerifier.ExpectedEvent> expected = List.of(
+        new EventVerifier.ExpectedEvent(
+            "e1", "Order:Special", "1", 1
+        ),
+        new EventVerifier.ExpectedEvent(
+            "e2", "Order", "Special:1", 1
+        )
+    );
 
-    @Test
-    void doesNotMergeAggregatesWhenIdentifiersContainColons() {
+    List<EventVerifier.ObservedEvent> observed = List.of(
+        new EventVerifier.ObservedEvent(
+            "e1", "Order:Special", "1", 1
+        ),
+        new EventVerifier.ObservedEvent(
+            "e2", "Order", "Special:1", 1
+        )
+    );
 
-        List<EventVerifier.ExpectedEvent> expected = List.of(
-            new EventVerifier.ExpectedEvent(
-                "e1",
-                "Order:Special",
-                "1",
-                1
-            ),
-            new EventVerifier.ExpectedEvent(
-                "e2",
-                "Order",
-                "Special:1",
-                1
-            )
-        );
+    ReliabilityReport report = verifier.verify(expected, observed);
 
-        List<EventVerifier.ObservedEvent> observed = List.of(
-            new EventVerifier.ObservedEvent(
-                "e1",
-                "Order:Special",
-                "1",
-                1
-            ),
-            new EventVerifier.ObservedEvent(
-                "e2",
-                "Order",
-                "Special:1",
-                1
-            )
-        );
+    assertTrue(report.orderingViolations().isEmpty());
+    assertTrue(report.missingEventIds().isEmpty());
+    assertTrue(report.duplicateEventIds().isEmpty());
+    assertTrue(report.unexpectedEventIds().isEmpty());
+    assertTrue(report.isReliable());
+}
 
-        ReliabilityReport report = verifier.verify(expected, observed);
+@Test
+void detectsUnexpectedEventIds() {
 
-        assertTrue(
-            report.orderingViolations().isEmpty(),
-            "Different aggregates must remain separate even when their "
-                + "type and ID contain colons"
-        );
+    List<EventVerifier.ExpectedEvent> expected = List.of(
+        new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ExpectedEvent("e2", "Order", "order-1", 2)
+    );
 
-        assertTrue(report.missingEventIds().isEmpty());
-        assertTrue(report.duplicateEventIds().isEmpty());
-        assertTrue(report.isReliable());
-    }
+    List<EventVerifier.ObservedEvent> observed = List.of(
+        new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ObservedEvent("unexpected-1", "Order", "order-1", 2)
+    );
+
+    ReliabilityReport report = verifier.verify(expected, observed);
+
+    assertEquals(
+        List.of("unexpected-1"),
+        report.unexpectedEventIds()
+    );
+    assertEquals(List.of("e2"), report.missingEventIds());
+    assertFalse(report.isReliable());
+}
+
+@Test
+void reportsRepeatedUnexpectedIdOnceAndDetectsDuplicateDelivery() {
+
+    List<EventVerifier.ExpectedEvent> expected = List.of(
+        new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1)
+    );
+
+    List<EventVerifier.ObservedEvent> observed = List.of(
+        new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ObservedEvent("rogue-1", "Order", "order-1", 2),
+        new EventVerifier.ObservedEvent("rogue-1", "Order", "order-1", 2)
+    );
+
+    ReliabilityReport report = verifier.verify(expected, observed);
+
+    assertEquals(
+        List.of("rogue-1"),
+        report.unexpectedEventIds()
+    );
+    assertEquals(
+        List.of("rogue-1"),
+        report.duplicateEventIds()
+    );
+    assertFalse(report.isReliable());
+}
+
+@Test
+void unexpectedEventMakesOtherwiseCompleteStreamUnreliable() {
+
+    List<EventVerifier.ExpectedEvent> expected = List.of(
+        new EventVerifier.ExpectedEvent("e1", "Order", "order-1", 1)
+    );
+
+    List<EventVerifier.ObservedEvent> observed = List.of(
+        new EventVerifier.ObservedEvent("e1", "Order", "order-1", 1),
+        new EventVerifier.ObservedEvent("extra-1", "Order", "order-1", 2)
+    );
+
+    ReliabilityReport report = verifier.verify(expected, observed);
+
+    assertTrue(report.missingEventIds().isEmpty());
+    assertTrue(report.duplicateEventIds().isEmpty());
+    assertTrue(report.orderingViolations().isEmpty());
+    assertEquals(List.of("extra-1"), report.unexpectedEventIds());
+    assertFalse(report.isReliable());
+}
 }
