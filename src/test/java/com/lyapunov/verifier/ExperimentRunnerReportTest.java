@@ -17,7 +17,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExperimentRunnerReportTest {
 
-```
 @TempDir
 Path tempDir;
 
@@ -143,6 +142,5 @@ void preservesUnexpectedEventIdsInJsonReport() throws Exception {
 
     assertEquals(result, restored);
 }
-```
 
 }
