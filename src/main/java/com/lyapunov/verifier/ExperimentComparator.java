@@ -26,15 +26,21 @@ public class ExperimentComparator {
                 candidate.orderingViolations().size()
                 - baseline.orderingViolations().size();
 
+        int unexpectedDelta =
+                candidate.unexpectedEventIds().size()
+                - baseline.unexpectedEventIds().size();
+
         boolean improved =
                 missingDelta < 0
                 || duplicateDelta < 0
-                || orderingDelta < 0;
+                || orderingDelta < 0
+                || unexpectedDelta < 0;
 
         boolean regressed =
                 missingDelta > 0
                 || duplicateDelta > 0
-                || orderingDelta > 0;
+                || orderingDelta > 0
+                || unexpectedDelta > 0;
 
         String outcome;
 
@@ -54,6 +60,7 @@ public class ExperimentComparator {
                 missingDelta,
                 duplicateDelta,
                 orderingDelta,
+                unexpectedDelta,
                 outcome
         );
     }
@@ -74,6 +81,7 @@ public class ExperimentComparator {
             );
         }
     }
+
     private void validateComparableExperiments(
             ExperimentRunner.ExperimentResult baseline,
             ExperimentRunner.ExperimentResult candidate

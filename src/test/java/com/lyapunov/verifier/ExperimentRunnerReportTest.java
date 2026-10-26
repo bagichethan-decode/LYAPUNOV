@@ -1,6 +1,7 @@
 package com.lyapunov.verifier;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -16,127 +17,132 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExperimentRunnerReportTest {
 
-    @TempDir
-    Path tempDir;
+```
+@TempDir
+Path tempDir;
 
-    private final ExperimentRunner runner = new ExperimentRunner();
+private final ExperimentRunner runner = new ExperimentRunner();
 
-    @Test
-    void writesCompleteReadableJsonWithoutLeavingTemporaryFiles()
-            throws Exception {
+@Test
+void writesCompleteReadableJsonWithoutLeavingTemporaryFiles()
+        throws Exception {
 
-        ExperimentRunner.ExperimentResult expected = runner.run(
-                42L,
-                FaultInjector.FaultType.DROP,
-                10
-        );
+    ExperimentRunner.ExperimentResult expected = runner.run(
+            42L,
+            FaultInjector.FaultType.DROP,
+            10
+    );
 
-        Path report = runner.writeJsonReport(expected, tempDir);
+    Path report = runner.writeJsonReport(expected, tempDir);
 
-        assertTrue(Files.isRegularFile(report));
-        assertTrue(report.getFileName().toString().endsWith(".json"));
+    assertTrue(Files.isRegularFile(report));
+    assertTrue(report.getFileName().toString().endsWith(".json"));
 
-        ObjectMapper mapper = new ObjectMapper();
+    ObjectMapper mapper = new ObjectMapper();
 
-        ExperimentRunner.ExperimentResult actual = mapper.readValue(
-                report.toFile(),
-                ExperimentRunner.ExperimentResult.class
-        );
+    ExperimentRunner.ExperimentResult actual = mapper.readValue(
+            report.toFile(),
+            ExperimentRunner.ExperimentResult.class
+    );
 
-        assertEquals(expected, actual);
+    assertEquals(expected, actual);
 
-        try (var files = Files.list(tempDir)) {
-            List<Path> contents = files.toList();
+    try (var files = Files.list(tempDir)) {
+        List<Path> contents = files.toList();
 
-            assertEquals(1, contents.size());
-            assertEquals(report, contents.get(0));
-        }
+        assertEquals(1, contents.size());
+        assertEquals(report, contents.get(0));
     }
+}
 
-    @Test
-    void repeatedWritesProduceDifferentReportPaths() throws Exception {
+@Test
+void repeatedWritesProduceDifferentReportPaths() throws Exception {
 
-        ExperimentRunner.ExperimentResult result = runner.run(
-                42L,
-                FaultInjector.FaultType.REORDER,
-                10
-        );
+    ExperimentRunner.ExperimentResult result = runner.run(
+            42L,
+            FaultInjector.FaultType.REORDER,
+            10
+    );
 
-        Path first = runner.writeJsonReport(result, tempDir);
-        Path second = runner.writeJsonReport(result, tempDir);
+    Path first = runner.writeJsonReport(result, tempDir);
+    Path second = runner.writeJsonReport(result, tempDir);
 
-        assertNotEquals(first, second);
-        assertTrue(Files.isRegularFile(first));
-        assertTrue(Files.isRegularFile(second));
+    assertNotEquals(first, second);
+    assertTrue(Files.isRegularFile(first));
+    assertTrue(Files.isRegularFile(second));
 
-        try (var files = Files.list(tempDir)) {
-            assertEquals(2, files.count());
-        }
+    try (var files = Files.list(tempDir)) {
+        assertEquals(2, files.count());
     }
+}
 
-    @Test
-    void rejectsNullResultWithoutCreatingOutputDirectory() {
+@Test
+void rejectsNullResultWithoutCreatingOutputDirectory() {
 
-        Path outputDirectory = tempDir.resolve("not-created");
+    Path outputDirectory = tempDir.resolve("not-created");
 
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> runner.writeJsonReport(null, outputDirectory)
-        );
+    assertThrows(
+            IllegalArgumentException.class,
+            () -> runner.writeJsonReport(null, outputDirectory)
+    );
 
-        assertFalse(Files.exists(outputDirectory));
-    }
+    assertFalse(Files.exists(outputDirectory));
+}
 
-    @Test
-    void rejectsNullOutputDirectory() {
+@Test
+void rejectsNullOutputDirectory() {
 
-        ExperimentRunner.ExperimentResult result = runner.run(
-                42L,
-                FaultInjector.FaultType.DROP,
-                10
-        );
+    ExperimentRunner.ExperimentResult result = runner.run(
+            42L,
+            FaultInjector.FaultType.DROP,
+            10
+    );
 
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> runner.writeJsonReport(result, null)
-        );
-    }
-    
-    @Test
-    void preservesUnexpectedEventIdsInJsonReport() throws Exception {
+    assertThrows(
+            IllegalArgumentException.class,
+            () -> runner.writeJsonReport(result, null)
+    );
+}
 
-        ExperimentRunner.ExperimentResult original = runner.run(
-                42L,
-                FaultInjector.FaultType.DROP,
-                10
-        );
+@Test
+void preservesUnexpectedEventIdsInJsonReport() throws Exception {
 
-        ObjectMapper mapper = new ObjectMapper();
+    ExperimentRunner.ExperimentResult original = runner.run(
+            42L,
+            FaultInjector.FaultType.DROP,
+            10
+    );
 
-        var json = mapper.valueToTree(original);
-        ((com.fasterxml.jackson.databind.node.ObjectNode) json)
-                .putPOJO(
-                        "unexpectedEventIds",
-                        List.of("unexpected-001", "unexpected-002")
-                );
+    ObjectMapper mapper = new ObjectMapper();
 
-        ExperimentRunner.ExperimentResult result = mapper.treeToValue(
-                json,
-                ExperimentRunner.ExperimentResult.class
-        );
+    ObjectNode json = mapper.valueToTree(original);
 
-        Path report = runner.writeJsonReport(result, tempDir);
+    json.set(
+            "unexpectedEventIds",
+            mapper.valueToTree(
+                    List.of("unexpected-001", "unexpected-002")
+            )
+    );
 
-        ExperimentRunner.ExperimentResult restored = mapper.readValue(
-                report.toFile(),
-                ExperimentRunner.ExperimentResult.class
-        );
+    ExperimentRunner.ExperimentResult result = mapper.treeToValue(
+            json,
+            ExperimentRunner.ExperimentResult.class
+    );
 
-        assertEquals(
-                List.of("unexpected-001", "unexpected-002"),
-                restored.unexpectedEventIds()
-        );
+    Path report = runner.writeJsonReport(result, tempDir);
 
-        assertEquals(result, restored);
-    }
+    ExperimentRunner.ExperimentResult restored = mapper.readValue(
+            report.toFile(),
+            ExperimentRunner.ExperimentResult.class
+    );
+
+    assertEquals(
+            List.of("unexpected-001", "unexpected-002"),
+            restored.unexpectedEventIds()
+    );
+
+    assertEquals(result, restored);
+}
+```
+
 }
