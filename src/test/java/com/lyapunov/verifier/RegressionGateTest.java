@@ -109,4 +109,53 @@ class RegressionGateTest {
         assertFalse(decision.passed());
         assertEquals(3, decision.violations().size());
     }
+    @Test
+void failsWhenUnexpectedEventsRegress() {
+    var comparison = new ExperimentComparison(
+            "baseline.json",
+            "candidate.json",
+            0,
+            0,
+            0,
+            1,
+            "REGRESSED"
+    );
+
+    var decision = strictGate.evaluate(comparison);
+
+    assertFalse(decision.passed());
+    assertEquals(1, decision.violations().size());
+    assertTrue(
+            decision.violations().get(0)
+                    .contains("Unexpected events increased")
+    );
+}
+
+@Test
+void permitsUnexpectedIncreaseWithinConfiguredThreshold() {
+    var gate = new RegressionGate(0, 0, 0, 2);
+
+    var comparison = new ExperimentComparison(
+            "baseline.json",
+            "candidate.json",
+            0,
+            0,
+            0,
+            2,
+            "REGRESSED"
+    );
+
+    var decision = gate.evaluate(comparison);
+
+    assertTrue(decision.passed());
+    assertTrue(decision.violations().isEmpty());
+}
+
+@Test
+void rejectsNegativeUnexpectedThreshold() {
+    assertThrows(
+            IllegalArgumentException.class,
+            () -> new RegressionGate(0, 0, 0, -1)
+    );
+}
 }
