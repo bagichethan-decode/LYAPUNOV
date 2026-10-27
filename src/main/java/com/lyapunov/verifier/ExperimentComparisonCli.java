@@ -115,8 +115,16 @@ public class ExperimentComparisonCli {
     public record RegressionThresholds(
             int maxMissingIncrease,
             int maxDuplicateIncrease,
-            int maxOrderingIncrease
+            int maxOrderingIncrease,
+            int maxUnexpectedIncrease
     ) {
+        public RegressionThresholds(
+                int maxMissingIncrease,
+                int maxDuplicateIncrease,
+                int maxOrderingIncrease
+        ) {
+            this(maxMissingIncrease, maxDuplicateIncrease, maxOrderingIncrease, 0);
+        }
     }
 
     public static void main(String[] args) {
@@ -129,6 +137,7 @@ public class ExperimentComparisonCli {
         int maxMissing = 0;
         int maxDuplicates = 0;
         int maxOrdering = 0;
+        int maxUnexpected = 0;
 
         boolean failOnRegression = false;
         Path jsonReportPath = null;
@@ -160,6 +169,13 @@ public class ExperimentComparisonCli {
                                     "--max-ordering"
                             );
 
+                    case "--max-unexpected" ->
+                            maxUnexpected = parseThreshold(
+                                    args,
+                                    ++i,
+                                    "--max-unexpected"
+                            );
+
                     case "--json-report" -> {
                         if (i + 1 >= args.length
                                 || args[i + 1].isBlank()) {
@@ -179,7 +195,8 @@ public class ExperimentComparisonCli {
 
             if ((maxMissing > 0
                     || maxDuplicates > 0
-                    || maxOrdering > 0)
+                    || maxOrdering > 0
+                    || maxUnexpected > 0)
                     && !failOnRegression) {
                 throw new IllegalArgumentException(
                         "Threshold options require --fail-on-regression"
@@ -206,6 +223,8 @@ public class ExperimentComparisonCli {
                     + comparison.duplicateEventDelta());
             System.out.println("Ordering issue delta  : "
                     + comparison.orderingViolationDelta());
+            System.out.println("Unexpected event delta: "
+                    + comparison.unexpectedEventDelta());
             System.out.println("Outcome               : "
                     + comparison.outcome());
 
@@ -215,7 +234,8 @@ public class ExperimentComparisonCli {
                 RegressionGate gate = new RegressionGate(
                         maxMissing,
                         maxDuplicates,
-                        maxOrdering
+                        maxOrdering,
+                        maxUnexpected
                 );
 
                 decision = gate.evaluate(comparison);
@@ -226,6 +246,8 @@ public class ExperimentComparisonCli {
                         + maxDuplicates);
                 System.out.println("Maximum ordering increase  : "
                         + maxOrdering);
+                System.out.println("Maximum unexpected increase: "
+                        + maxUnexpected);
                 System.out.println("Regression gate            : "
                         + (decision.passed() ? "PASS" : "FAIL"));
 
@@ -244,7 +266,8 @@ public class ExperimentComparisonCli {
                         new RegressionThresholds(
                                 maxMissing,
                                 maxDuplicates,
-                                maxOrdering
+                                maxOrdering,
+                                maxUnexpected
                         ),
                         decision == null ? null : decision.passed(),
                         decision == null
@@ -311,6 +334,7 @@ public class ExperimentComparisonCli {
                 + "[--max-missing N] "
                 + "[--max-duplicates N] "
                 + "[--max-ordering N] "
+                + "[--max-unexpected N] "
                 + "[--json-report PATH]"
         );
     }

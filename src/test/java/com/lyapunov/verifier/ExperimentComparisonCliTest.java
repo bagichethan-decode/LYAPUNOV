@@ -65,4 +65,28 @@ class ExperimentComparisonCliTest {
                 )
         );
     }
+
+    @Test
+    void acceptsUnexpectedEventThreshold() {
+        assertEquals(
+                3,
+                ExperimentComparisonCli.parseThreshold(
+                        new String[]{"--max-unexpected", "3"},
+                        1,
+                        "--max-unexpected"
+                )
+        );
+    }
+
+    @Test
+    void rejectsNegativeUnexpectedEventThreshold() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ExperimentComparisonCli.parseThreshold(
+                        new String[]{"--max-unexpected", "-1"},
+                        1,
+                        "--max-unexpected"
+                )
+        );
+    }
 }
