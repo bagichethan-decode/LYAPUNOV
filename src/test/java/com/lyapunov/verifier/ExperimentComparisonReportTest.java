@@ -66,6 +66,11 @@ class ExperimentComparisonReportTest {
                 1,
                 json.get("violations").size()
         );
+                assertEquals(
+                0,
+                json.get("thresholds")
+                        .get("maxUnexpectedIncrease").asInt()
+        );
     }
 
     @Test
