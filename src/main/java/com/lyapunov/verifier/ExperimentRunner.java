@@ -315,6 +315,9 @@ public class ExperimentRunner {
                     "Ordering issues   : " + result.orderingViolations()
             );
             System.out.println(
+                    "Unexpected events : " + result.unexpectedEventIds()
+            );
+            System.out.println(
                     "Reliable          : " + result.reliable()
             );
 
