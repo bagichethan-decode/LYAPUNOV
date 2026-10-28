@@ -41,4 +41,9 @@ Validation and unexpected-event detection
 - Added five unit tests for the detector.
 - Achieved 83 passing tests, zero failures, and pushed commit 8390c34 to GitHub.
 
-working on it 
+### Experiment Report Path Validation — Rough Work
+
+**Objective:** Improve the reliability of the experiment comparison CLI by validating input report paths before processing.
+
+**Work
+
