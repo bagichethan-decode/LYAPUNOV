@@ -21,6 +21,18 @@ public class ExperimentComparisonCli {
             Path candidatePath
     ) throws IOException {
 
+        if (baselinePath == null || baselinePath.toString().isBlank()) {
+            throw new IllegalArgumentException(
+                    "Baseline report path cannot be null or blank"
+            );
+        }
+
+        if (candidatePath == null || candidatePath.toString().isBlank()) {
+            throw new IllegalArgumentException(
+                    "Candidate report path cannot be null or blank"
+            );
+        }
+
         if (!Files.isRegularFile(baselinePath)) {
             throw new IllegalArgumentException(
                     "Baseline report not found: " + baselinePath
