@@ -183,6 +183,52 @@ class OutboxRepositoryDeadEventRecoveryTest {
         assertEquals(0, historyCount("EVENT_SKIPPED"));
     }
 
+    @Test
+    void deadLetterListingReturnsOnlyTerminalEventsInStablePages() throws Exception {
+        UUID firstId = insertEvent("dlq-first", 1);
+        UUID secondId = insertEvent("dlq-second", 1);
+        UUID publishedId = insertEvent("dlq-published", 1);
+
+        List<OutboxEvent> claims = repository.claimPendingEvents(
+            "worker-dlq", 10, Duration.ofSeconds(20)
+        );
+        assertEquals(3, claims.size());
+        for (OutboxEvent claim : claims) {
+            if (claim.id().equals(publishedId)) {
+                assertTrue(repository.markPublished(claim.id(), "worker-dlq", claim.claimToken()));
+            } else {
+                assertTrue(repository.recordFailure(
+                    claim.id(), "worker-dlq", claim.claimToken(), 1
+                ));
+            }
+        }
+
+        List<OutboxEvent> firstPage = repository.listDeadEvents(1, 0);
+        List<OutboxEvent> secondPage = repository.listDeadEvents(1, 1);
+        List<OutboxEvent> all = repository.listDeadEvents(10, 0);
+
+        assertEquals(1, firstPage.size());
+        assertEquals(1, secondPage.size());
+        assertEquals(2, all.size());
+        List<UUID> listedIds = all.stream().map(OutboxEvent::id).toList();
+        assertTrue(listedIds.contains(firstId));
+        assertTrue(listedIds.contains(secondId));
+        assertFalse(listedIds.contains(publishedId));
+        assertEquals(firstPage.get(0).id(), all.get(0).id());
+        assertEquals(secondPage.get(0).id(), all.get(1).id());
+        assertEquals(OutboxEvent.EventStatus.DEAD, all.get(0).status());
+        assertEquals(OutboxEvent.EventStatus.DEAD, all.get(1).status());
+    }
+
+    @Test
+    void deadLetterListingValidatesPaginationBounds() {
+        assertThrows(IllegalArgumentException.class,
+            () -> repository.listDeadEvents(0, 0));
+        assertThrows(IllegalArgumentException.class,
+            () -> repository.listDeadEvents(501, 0));
+        assertThrows(IllegalArgumentException.class,
+            () -> repository.listDeadEvents(10, -1));
+    }
     private static String status(UUID eventId) throws Exception {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement stmt = conn.prepareStatement(

@@ -371,6 +371,41 @@ UPDATE outbox_events
     }
 
     /**
+     * Returns a stable, paginated view of terminally failed events for operator review.
+     * Both DEAD and legacy FAILED rows are included; active and completed events are excluded.
+     */
+    public List<OutboxEvent> listDeadEvents(int limit, int offset) throws SQLException {
+        if (limit <= 0 || limit > 500) {
+            throw new IllegalArgumentException("limit must be between 1 and 500");
+        }
+        if (offset < 0) {
+            throw new IllegalArgumentException("offset must not be negative");
+        }
+
+        String sql = """
+            SELECT id, aggregate_type, aggregate_id, sequence_number, event_type,
+                   payload, status, retry_count, claimed_by, claim_token,
+                   lease_expires_at, created_at, updated_at
+            FROM outbox_events
+            WHERE status IN ('DEAD', 'FAILED')
+            ORDER BY created_at ASC, id ASC
+            LIMIT ? OFFSET ?
+        """;
+
+        List<OutboxEvent> events = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, limit);
+            stmt.setInt(2, offset);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    events.add(mapEvent(rs));
+                }
+            }
+        }
+        return events;
+    }
+    /**
      * Requeues a terminally failed event after an operator reviews the failure.
      * The retry budget is reset and the operator action is persisted atomically
      * with the state change. Legacy FAILED rows are accepted for compatibility.
