@@ -29,4 +29,11 @@ public final class JdbcOutboxStore implements OutboxStore {
     public boolean failed(UUID eventId, String workerId, UUID claimToken, int maxRetries) throws Exception {
         return repository.recordFailure(eventId, workerId, claimToken, maxRetries);
     }
+
+    @Override
+    public boolean failed(UUID eventId, String workerId, UUID claimToken, int maxRetries,
+                          Duration baseRetryDelay, Duration maxRetryDelay) throws Exception {
+        return repository.recordFailure(eventId, workerId, claimToken, maxRetries,
+            baseRetryDelay, maxRetryDelay);
+    }
 }

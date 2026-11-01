@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     payload JSONB NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     retry_count INT NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
     claimed_by VARCHAR(255),
     claim_token UUID,
     lease_expires_at TIMESTAMP WITH TIME ZONE,
@@ -16,6 +18,8 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 );
 
 -- Safe for databases created before claim-token fencing was introduced.
+ALTER TABLE outbox_events
+    ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
 ALTER TABLE outbox_events
     ADD COLUMN IF NOT EXISTS claim_token UUID;
 
@@ -54,3 +58,10 @@ ON event_history (
 CREATE INDEX IF NOT EXISTS idx_outbox_claim_order
 ON outbox_events (created_at, aggregate_type, aggregate_id, sequence_number)
 WHERE status IN ('PENDING', 'CLAIMED');
+
+CREATE INDEX IF NOT EXISTS idx_outbox_retry_due
+ON outbox_events (next_attempt_at, created_at)
+WHERE status = 'PENDING';
+
+-- Retry timestamps are cleared when an event is published or moved to DEAD.
+ALTER TABLE outbox_events ALTER COLUMN next_attempt_at DROP NOT NULL;

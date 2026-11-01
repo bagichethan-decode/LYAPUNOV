@@ -10,4 +10,9 @@ public interface OutboxStore {
     List<OutboxEvent> claim(String workerId, int batchSize, Duration leaseDuration) throws Exception;
     boolean published(UUID eventId, String workerId, UUID claimToken) throws Exception;
     boolean failed(UUID eventId, String workerId, UUID claimToken, int maxRetries) throws Exception;
+
+    default boolean failed(UUID eventId, String workerId, UUID claimToken, int maxRetries,
+                           Duration baseRetryDelay, Duration maxRetryDelay) throws Exception {
+        return failed(eventId, workerId, claimToken, maxRetries);
+    }
 }

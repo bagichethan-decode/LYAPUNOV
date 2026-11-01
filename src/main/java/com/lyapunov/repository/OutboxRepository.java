@@ -60,7 +60,8 @@ public class OutboxRepository {
                    e.lease_expires_at, e.created_at, e.updated_at
             FROM outbox_events e
             WHERE (
-                e.status = 'PENDING'
+                (e.status = 'PENDING'
+                    AND (e.next_attempt_at IS NULL OR e.next_attempt_at <= clock_timestamp()))
                 OR (e.status = 'CLAIMED' AND e.lease_expires_at < clock_timestamp())
             )
             AND NOT EXISTS (
@@ -186,11 +187,12 @@ public class OutboxRepository {
         """;
 
         String updateSql = """
-            UPDATE outbox_events
+UPDATE outbox_events
             SET status = 'PUBLISHED',
                 claimed_by = NULL,
                 claim_token = NULL,
                 lease_expires_at = NULL,
+                next_attempt_at = NULL,
                 updated_at = clock_timestamp()
             WHERE id = ?
               AND status = 'CLAIMED'
@@ -256,9 +258,29 @@ public class OutboxRepository {
         UUID claimToken,
         int maxRetries
     ) throws SQLException {
+        return recordFailure(eventId, workerId, claimToken, maxRetries, Duration.ZERO, Duration.ZERO);
+    }
+
+    /**
+     * Records a failure and schedules the next attempt in PostgreSQL. The delay is
+     * exponential (base * 2^(retryCount-1)) and capped at maxRetryDelay.
+     */
+    public boolean recordFailure(
+        UUID eventId,
+        String workerId,
+        UUID claimToken,
+        int maxRetries,
+        Duration baseRetryDelay,
+        Duration maxRetryDelay
+    ) throws SQLException {
         validateClaimArguments(eventId, workerId, claimToken);
         if (maxRetries <= 0) {
             throw new IllegalArgumentException("maxRetries must be positive");
+        }
+        if (baseRetryDelay == null || baseRetryDelay.isNegative()
+            || maxRetryDelay == null || maxRetryDelay.isNegative()
+            || maxRetryDelay.compareTo(baseRetryDelay) < 0) {
+            throw new IllegalArgumentException("retry delays must be non-negative and maxRetryDelay >= baseRetryDelay");
         }
 
         String selectSql = """
@@ -272,9 +294,13 @@ public class OutboxRepository {
         """;
 
         String updateSql = """
-            UPDATE outbox_events
+UPDATE outbox_events
             SET retry_count = retry_count + 1,
                 status = CASE WHEN retry_count + 1 >= ? THEN 'DEAD' ELSE 'PENDING' END,
+                next_attempt_at = CASE
+                    WHEN retry_count + 1 >= ? THEN NULL
+                    ELSE clock_timestamp() + (? * INTERVAL '1 millisecond')
+                END,
                 claimed_by = NULL,
                 claim_token = NULL,
                 lease_expires_at = NULL,
@@ -307,10 +333,15 @@ public class OutboxRepository {
                     int nextRetryCount = event.retryCount() + 1;
                     String nextStatus = nextRetryCount >= maxRetries ? "DEAD" : "PENDING";
 
+                    long retryDelayMillis = calculateRetryDelayMillis(
+                        nextRetryCount, baseRetryDelay, maxRetryDelay
+                    );
                     updateStmt.setInt(1, maxRetries);
-                    updateStmt.setObject(2, eventId);
-                    updateStmt.setString(3, workerId);
-                    updateStmt.setObject(4, claimToken);
+                    updateStmt.setInt(2, maxRetries);
+                    updateStmt.setLong(3, retryDelayMillis);
+                    updateStmt.setObject(4, eventId);
+                    updateStmt.setString(5, workerId);
+                    updateStmt.setObject(6, claimToken);
                     if (updateStmt.executeUpdate() != 1) {
                         conn.commit();
                         return false;
@@ -322,7 +353,8 @@ public class OutboxRepository {
                         "EVENT_FAILED",
                         workerId,
                         "{\"retryCount\":" + nextRetryCount +
-                            ",\"nextStatus\":\"" + nextStatus + "\"}"
+                            ",\"nextStatus\":\"" + nextStatus +
+                            "\",\"retryDelayMillis\":" + retryDelayMillis + "}"
                     );
                 }
 
@@ -375,9 +407,10 @@ public class OutboxRepository {
         """;
 
         String updateSql = """
-            UPDATE outbox_events
+UPDATE outbox_events
             SET status = ?,
                 retry_count = CASE WHEN ? THEN 0 ELSE retry_count END,
+                next_attempt_at = CASE WHEN ? = 'PENDING' THEN clock_timestamp() ELSE NULL END,
                 claimed_by = NULL,
                 claim_token = NULL,
                 lease_expires_at = NULL,
@@ -407,7 +440,8 @@ public class OutboxRepository {
 
                     updateStmt.setString(1, targetStatus);
                     updateStmt.setBoolean(2, resetRetryCount);
-                    updateStmt.setObject(3, eventId);
+                    updateStmt.setString(3, targetStatus);
+                    updateStmt.setObject(4, eventId);
                     if (updateStmt.executeUpdate() != 1) {
                         throw new SQLException("Could not transition dead event: " + eventId);
                     }
@@ -427,6 +461,22 @@ public class OutboxRepository {
                 conn.setAutoCommit(true);
             }
         }
+    }
+
+    private static long calculateRetryDelayMillis(
+        int retryCount,
+        Duration baseRetryDelay,
+        Duration maxRetryDelay
+    ) {
+        long base = baseRetryDelay.toMillis();
+        long maximum = maxRetryDelay.toMillis();
+        if (base == 0 || maximum == 0) return 0;
+        long delay = base;
+        for (int attempt = 1; attempt < retryCount && delay < maximum; attempt++) {
+            if (delay > maximum / 2) return maximum;
+            delay *= 2;
+        }
+        return Math.min(delay, maximum);
     }
 
     private static void validateOperatorActionArguments(UUID eventId, String operatorId, String reason) {
