@@ -9,7 +9,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class WorkerHeartbeatRepository {
+public final class WorkerHeartbeatRepository implements WorkerHeartbeatStore {
     private final DataSource dataSource;
 
     public WorkerHeartbeatRepository(DataSource dataSource) {
@@ -17,6 +17,7 @@ public final class WorkerHeartbeatRepository {
         this.dataSource = dataSource;
     }
 
+    @Override
     public void heartbeat(String workerId, String instanceId, long publishedCount,
                           long failedCount, long staleClaimCount, String lastError) throws Exception {
         requireText(workerId, "workerId");
@@ -59,6 +60,7 @@ public final class WorkerHeartbeatRepository {
         }
     }
 
+    @Override
     public boolean markStopped(String workerId, String instanceId) throws Exception {
         requireText(workerId, "workerId");
         requireText(instanceId, "instanceId");
