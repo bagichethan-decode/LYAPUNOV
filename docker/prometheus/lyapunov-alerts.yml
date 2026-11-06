@@ -1,0 +1,26 @@
+groups:
+  - name: lyapunov-worker-health
+    rules:
+      - alert: LyapunovWorkerDown
+        expr: lyapunov_worker_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LYAPUNOV worker is down"
+
+      - alert: LyapunovWorkerStale
+        expr: lyapunov_worker_stale == 1
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "LYAPUNOV worker heartbeat is stale"
+
+      - alert: LyapunovWorkerPublishFailures
+        expr: increase(lyapunov_worker_failed_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LYAPUNOV worker publish failures detected"

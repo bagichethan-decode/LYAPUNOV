@@ -48,6 +48,90 @@ services:
       retries: 12
       start_period: 30s
 
+  metrics-volume-init:
+    image: alpine:3.21
+    container_name: lyapunov-metrics-volume-init
+    user: "0:0"
+    command:
+      - /bin/sh
+      - -c
+      - "chown -R 10001:10001 /textfile && chmod 775 /textfile"
+    volumes:
+      - prometheus-textfile:/textfile
+    restart: "no"
+
+  metrics-updater:
+    image: lyapunov:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lyapunov-metrics-updater
+    restart: unless-stopped
+    user: "10001:10001"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          java -cp '/app/app.jar:/app/dependency/*' com.lyapunov.cli.WorkerMetricsCli 30 /textfile/lyapunov-workers.prom || echo "Metrics update failed";
+          sleep 15;
+        done
+    environment:
+      LYAPUNOV_JDBC_URL: jdbc:postgresql://postgres:5432/lyapunov
+      LYAPUNOV_DB_USER: lyapunov
+      LYAPUNOV_DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    volumes:
+      - prometheus-textfile:/textfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      metrics-volume-init:
+        condition: service_completed_successfully
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    container_name: lyapunov-node-exporter
+    restart: unless-stopped
+    command:
+      - "--collector.textfile.directory=/textfile"
+    volumes:
+      - prometheus-textfile:/textfile:ro
+    ports:
+      - "127.0.0.1:9100:9100"
+    depends_on:
+      - metrics-updater
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: lyapunov-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/lyapunov-alerts.yml:/etc/prometheus/lyapunov-alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - node-exporter
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    container_name: lyapunov-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+
 volumes:
   pgdata:
   kafkadata:
+  prometheus-textfile:
+  prometheus-data:
+  grafana-data:
