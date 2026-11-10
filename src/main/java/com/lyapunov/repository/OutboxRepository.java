@@ -34,6 +34,122 @@ public class OutboxRepository {
     }
 
     /**
+     * Atomically enqueues an event and records its creation in event history.
+     * Sequence allocation is serialized per aggregate using PostgreSQL advisory locks.
+     */
+    public OutboxEvent enqueue(
+        String aggregateType,
+        String aggregateId,
+        String eventType,
+        String payload
+    ) throws SQLException {
+
+        validateEnqueueField(aggregateType, "aggregateType");
+        validateEnqueueField(aggregateId, "aggregateId");
+        validateEnqueueField(eventType, "eventType");
+
+        if (payload == null || payload.isBlank()) {
+            throw new IllegalArgumentException("payload must not be null or blank");
+        }
+
+        String lockSql = """
+            SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))
+        """;
+
+        String sequenceSql = """
+            SELECT COALESCE(MAX(sequence_number), 0) + 1
+            FROM outbox_events
+            WHERE aggregate_type = ?
+              AND aggregate_id = ?
+        """;
+
+        String insertSql = """
+            INSERT INTO outbox_events (
+                aggregate_type,
+                aggregate_id,
+                sequence_number,
+                event_type,
+                payload,
+                status,
+                retry_count,
+                next_attempt_at
+            )
+            VALUES (?, ?, ?, ?, ?::jsonb, 'PENDING', 0, clock_timestamp())
+            RETURNING id, aggregate_type, aggregate_id, sequence_number,
+                      event_type, payload, status, retry_count, claimed_by,
+                      claim_token, lease_expires_at, created_at, updated_at
+        """;
+
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+
+            try {
+                try (PreparedStatement lockStmt = conn.prepareStatement(lockSql)) {
+                    lockStmt.setString(1, aggregateType);
+                    lockStmt.setString(2, aggregateId);
+                    lockStmt.execute();
+                }
+
+                long sequenceNumber;
+
+                try (PreparedStatement sequenceStmt = conn.prepareStatement(sequenceSql)) {
+                    sequenceStmt.setString(1, aggregateType);
+                    sequenceStmt.setString(2, aggregateId);
+
+                    try (ResultSet rs = sequenceStmt.executeQuery()) {
+                        if (!rs.next()) {
+                            throw new SQLException("Could not allocate aggregate sequence");
+                        }
+                        sequenceNumber = rs.getLong(1);
+                    }
+                }
+
+                OutboxEvent event;
+
+                try (PreparedStatement insertStmt = conn.prepareStatement(insertSql)) {
+                    insertStmt.setString(1, aggregateType);
+                    insertStmt.setString(2, aggregateId);
+                    insertStmt.setLong(3, sequenceNumber);
+                    insertStmt.setString(4, eventType);
+                    insertStmt.setString(5, payload);
+
+                    try (ResultSet rs = insertStmt.executeQuery()) {
+                        if (!rs.next()) {
+                            throw new SQLException("Outbox event insertion returned no row");
+                        }
+                        event = mapEvent(rs);
+                    }
+                }
+
+                historyRepository.record(
+                    conn,
+                    event,
+                    "EVENT_ENQUEUED",
+                    null,
+                    "{}"
+                );
+
+                conn.commit();
+                return event;
+
+            } catch (SQLException | RuntimeException exception) {
+                conn.rollback();
+                throw exception;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    private static void validateEnqueueField(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(fieldName + " must not be null or blank");
+        }
+        if (value.length() > 255) {
+            throw new IllegalArgumentException(fieldName + " must not exceed 255 characters");
+        }
+    }
+    /**
      * Claims a batch of pending or lease-expired events using SELECT ... FOR UPDATE SKIP LOCKED.
      * Each claim receives a fresh token. Completion and failure operations must present that
      * token, which fences off stale workers after a lease has been reclaimed.
