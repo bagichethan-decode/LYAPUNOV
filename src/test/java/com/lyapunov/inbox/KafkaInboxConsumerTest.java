@@ -150,41 +150,38 @@ class KafkaInboxConsumerTest {
     }
 
     @Test
-    void failedBusinessWorkRollsBackAndKafkaRecordCanBeRetried()
+    void failedBusinessWorkRollsBackAndSameConsumerCanRetryRecord()
         throws Exception {
 
         String topic = createTopic();
         UUID eventId = UUID.randomUUID();
         String groupId = "retry-" + UUID.randomUUID();
+        int[] attempts = {0};
 
         sendEvent(topic, eventId);
 
-        KafkaInboxConsumer failingConsumer = newConsumer(
+        try (KafkaInboxConsumer consumer = newConsumer(
             topic,
             "orders",
             groupId,
             (connection, record) -> {
+                attempts[0]++;
                 insertEffect(connection, "orders", eventId);
-                throw new SQLException("Simulated business failure");
+
+                if (attempts[0] == 1) {
+                    throw new SQLException("Simulated business failure");
+                }
             }
-        );
-
-        try (failingConsumer) {
-            awaitFailure(failingConsumer);
-        }
-
-        assertEquals(0, effectCount(eventId));
-        assertEquals(0, inboxCount("orders", eventId));
-
-        try (KafkaInboxConsumer retryConsumer = newConsumer(
-            topic,
-            "orders",
-            groupId,
-            (connection, record) ->
-                insertEffect(connection, "orders", eventId)
         )) {
-            assertEquals(1, awaitProcessed(retryConsumer, 1));
+            awaitFailure(consumer);
 
+            assertEquals(1, attempts[0]);
+            assertEquals(0, effectCount(eventId));
+            assertEquals(0, inboxCount("orders", eventId));
+
+            assertEquals(1, awaitProcessed(consumer, 1));
+
+            assertEquals(2, attempts[0]);
             assertEquals(1, effectCount(eventId));
             assertEquals(1, inboxCount("orders", eventId));
             assertTrue(isProcessed("orders", eventId));
