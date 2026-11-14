@@ -88,6 +88,33 @@ services:
       metrics-volume-init:
         condition: service_completed_successfully
 
+  worker:
+    image: lyapunov:local
+    container_name: lyapunov-worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      JAVA_MAIN_CLASS: com.lyapunov.cli.OutboxRelayWorkerCli
+      LYAPUNOV_JDBC_URL: jdbc:postgresql://postgres:5432/lyapunov
+      LYAPUNOV_DB_USER: lyapunov
+      LYAPUNOV_DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      LYAPUNOV_WORKER_ID: lyapunov-relay
+      LYAPUNOV_WORKER_BATCH_SIZE: 100
+      LYAPUNOV_WORKER_MAX_RETRIES: 8
+      LYAPUNOV_WORKER_LEASE_SECONDS: 30
+      LYAPUNOV_WORKER_POLL_MILLIS: 500
+      LYAPUNOV_WORKER_BASE_RETRY_DELAY_MILLIS: 1000
+      LYAPUNOV_WORKER_MAX_RETRY_DELAY_SECONDS: 300
+      LYAPUNOV_WORKER_HEARTBEAT_SECONDS: 10
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      LYAPUNOV_KAFKA_TOPIC: lyapunov.events
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
   api:
     image: lyapunov:local
     container_name: lyapunov-api
