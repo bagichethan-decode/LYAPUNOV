@@ -160,18 +160,55 @@ public final class KafkaInboxConsumer implements AutoCloseable {
 
             ConsumerRecord<String, String> record = batch.get(i);
 
-            TopicPartition partition = new TopicPartition(
-                record.topic(),
-                record.partition()
-            );
+            TopicPartition partition =
+                new TopicPartition(record.topic(), record.partition());
 
+            UUID eventId;
+            String eventType;
+
+            // Permanent message metadata validation.
             try {
-                UUID eventId = UUID.fromString(
+                eventId = UUID.fromString(
                     requiredHeader(record, EVENT_ID_HEADER)
                 );
 
-                String eventType = requiredHeader(record, EVENT_TYPE_HEADER);
+                eventType = requiredHeader(record, EVENT_TYPE_HEADER);
 
+            } catch (IllegalArgumentException validationFailure) {
+
+                try {
+                    inboxProcessor.recordDeadLetter(
+                        consumerName,
+                        record,
+                        validationFailure
+                    );
+
+                    consumer.commitSync(
+                        Map.of(
+                            partition,
+                            new OffsetAndMetadata(record.offset() + 1)
+                        )
+                    );
+
+                    processedCount++;
+                    continue;
+
+                } catch (Exception persistenceFailure) {
+
+                    persistenceFailure.addSuppressed(validationFailure);
+
+                    rewindUncommittedRecords(
+                        batch,
+                        i,
+                        persistenceFailure
+                    );
+
+                    throw persistenceFailure;
+                }
+            }
+
+            // Business processing failures must remain retryable.
+            try {
                 inboxProcessor.process(
                     consumerName,
                     eventId,
@@ -179,27 +216,29 @@ public final class KafkaInboxConsumer implements AutoCloseable {
                     connection -> work.execute(connection, record)
                 );
 
-                Map<TopicPartition, OffsetAndMetadata> committedOffsets =
+                consumer.commitSync(
                     Map.of(
                         partition,
                         new OffsetAndMetadata(record.offset() + 1)
-                    );
-
-                consumer.commitSync(committedOffsets);
+                    )
+                );
 
                 processedCount++;
 
-            } catch (Exception failure) {
+            } catch (Exception processingFailure) {
 
-                rewindUncommittedRecords(batch, i, failure);
+                rewindUncommittedRecords(
+                    batch,
+                    i,
+                    processingFailure
+                );
 
-                throw failure;
+                throw processingFailure;
             }
         }
 
         return processedCount;
     }
-
     private static String requiredHeader(
         ConsumerRecord<String, String> record,
         String headerName

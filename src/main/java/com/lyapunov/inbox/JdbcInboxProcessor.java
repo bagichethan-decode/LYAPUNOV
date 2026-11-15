@@ -1,5 +1,6 @@
 package com.lyapunov.inbox;
 
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -63,4 +64,54 @@ public final class JdbcInboxProcessor {
             }
         }
     }
-}
+
+    /**
+     * Durably records a permanently invalid Kafka message.
+     * The unique topic/partition/offset key makes retries idempotent.
+     */
+    public void recordDeadLetter(
+        String consumerName,
+        ConsumerRecord<String, String> record,
+        Exception failure
+    ) throws SQLException {
+
+        Objects.requireNonNull(consumerName, "consumerName must not be null");
+        Objects.requireNonNull(record, "record must not be null");
+        Objects.requireNonNull(failure, "failure must not be null");
+
+        String sql = """
+            INSERT INTO consumer_dead_letters (
+                consumer_name,
+                topic,
+                partition_id,
+                message_offset,
+                record_key,
+                record_value,
+                error_type,
+                error_message
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (
+                consumer_name,
+                topic,
+                partition_id,
+                message_offset
+            ) DO NOTHING
+            """;
+
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+
+            statement.setString(1, consumerName);
+            statement.setString(2, record.topic());
+            statement.setInt(3, record.partition());
+            statement.setLong(4, record.offset());
+            statement.setString(5, record.key());
+            statement.setString(6, record.value());
+            statement.setString(7, failure.getClass().getName());
+            statement.setString(8, failure.getMessage());
+
+            statement.executeUpdate();
+        }
+    }}
+
