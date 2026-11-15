@@ -3,6 +3,10 @@ package com.lyapunov.inbox;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.MockConsumer;
+import org.apache.kafka.clients.consumer.OffsetResetStrategy;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -27,6 +31,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -224,6 +229,102 @@ class KafkaInboxConsumerTest {
         }
     }
 
+    @Test
+    void rewindsEveryUncommittedPartitionWhenFirstRecordFails()
+        throws Exception {
+
+        String topic = "lyapunov-mock-" + UUID.randomUUID();
+
+        TopicPartition partition0 = new TopicPartition(topic, 0);
+        TopicPartition partition1 = new TopicPartition(topic, 1);
+
+        MockConsumer<String, String> mock =
+            new MockConsumer<>(OffsetResetStrategy.EARLIEST);
+
+        mock.updateBeginningOffsets(
+            Map.of(
+                partition0, 0L,
+                partition1, 0L
+            )
+        );
+
+        int[] attempts = {0};
+
+        String consumerName = "multi-partition-" + UUID.randomUUID();
+
+        try (KafkaInboxConsumer consumer = new KafkaInboxConsumer(
+            mock,
+            topic,
+            consumerName,
+            processor,
+            (connection, record) -> {
+                attempts[0]++;
+
+                if (attempts[0] == 1) {
+                    throw new SQLException("Simulated first-record failure");
+                }
+            }
+        )) {
+
+            mock.rebalance(List.of(partition0, partition1));
+
+            UUID event0 = UUID.randomUUID();
+            UUID event1 = UUID.randomUUID();
+
+            ConsumerRecord<String, String> record0 =
+                new ConsumerRecord<>(topic, 0, 0L, "key-0", "{}");
+
+            record0.headers().add(
+                "lyapunov-event-id",
+                event0.toString().getBytes(StandardCharsets.UTF_8)
+            );
+
+            record0.headers().add(
+                "lyapunov-event-type",
+                "ORDER_CREATED".getBytes(StandardCharsets.UTF_8)
+            );
+
+            ConsumerRecord<String, String> record1 =
+                new ConsumerRecord<>(topic, 1, 0L, "key-1", "{}");
+
+            record1.headers().add(
+                "lyapunov-event-id",
+                event1.toString().getBytes(StandardCharsets.UTF_8)
+            );
+
+            record1.headers().add(
+                "lyapunov-event-type",
+                "ORDER_CREATED".getBytes(StandardCharsets.UTF_8)
+            );
+
+            mock.addRecord(record0);
+            mock.addRecord(record1);
+
+            SQLException failure = assertThrows(
+                SQLException.class,
+                () -> consumer.processAvailable(Duration.ZERO)
+            );
+
+            assertEquals(
+                "Simulated first-record failure",
+                failure.getMessage()
+            );
+
+            assertEquals(1, attempts[0]);
+
+            assertEquals(
+                0L,
+                mock.position(partition0),
+                "Partition 0 must rewind to its uncommitted record"
+            );
+
+            assertEquals(
+                0L,
+                mock.position(partition1),
+                "Partition 1 must rewind to its unprocessed record"
+            );
+        }
+    }
     private static KafkaInboxConsumer newConsumer(
         String topic,
         String consumerName,
