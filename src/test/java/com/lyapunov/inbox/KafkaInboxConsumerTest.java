@@ -525,6 +525,135 @@ class KafkaInboxConsumerTest {
             );
         }
     }
+    @Test
+    void consumerRestartAfterOffsetCommitFailureDoesNotRepeatBusinessWork()
+        throws Exception {
+
+        String topic = createTopic();
+        String consumerName = "restart-recovery-" + UUID.randomUUID();
+        String groupId = "restart-group-" + UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+
+        sendEvent(topic, eventId);
+
+        Properties properties = new Properties();
+        properties.put(
+            ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
+            KAFKA.getBootstrapServers()
+        );
+        properties.put(
+            ConsumerConfig.GROUP_ID_CONFIG,
+            groupId
+        );
+        properties.put(
+            ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
+            org.apache.kafka.common.serialization.StringDeserializer.class.getName()
+        );
+        properties.put(
+            ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
+            org.apache.kafka.common.serialization.StringDeserializer.class.getName()
+        );
+        properties.put(
+            ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG,
+            "false"
+        );
+        properties.put(
+            ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
+            "earliest"
+        );
+
+        KafkaConsumer<String, String> delegate =
+            new KafkaConsumer<>(properties);
+
+        AtomicBoolean failFirstCommit = new AtomicBoolean(true);
+        AtomicBoolean businessExecuted = new AtomicBoolean(false);
+
+        @SuppressWarnings("unchecked")
+        Consumer<String, String> failingConsumer =
+            (Consumer<String, String>) java.lang.reflect.Proxy.newProxyInstance(
+                Consumer.class.getClassLoader(),
+                new Class<?>[] { Consumer.class },
+                (proxy, method, args) -> {
+
+                    if ("commitSync".equals(method.getName())
+                        && failFirstCommit.compareAndSet(true, false)) {
+
+                        throw new KafkaException(
+                            "Simulated Kafka offset commit failure"
+                        );
+                    }
+
+                    try {
+                        return method.invoke(delegate, args);
+                    } catch (InvocationTargetException failure) {
+                        throw failure.getCause();
+                    }
+                }
+            );
+
+        KafkaInboxWork work = (connection, record) -> {
+            businessExecuted.set(true);
+            insertEffect(connection, consumerName, eventId);
+        };
+
+        boolean commitFailureObserved = false;
+
+        try (KafkaInboxConsumer firstConsumer = new KafkaInboxConsumer(
+            failingConsumer,
+            topic,
+            consumerName,
+            processor,
+            work
+        )) {
+
+            long deadline = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(30);
+
+            while (System.nanoTime() < deadline) {
+                try {
+                    firstConsumer.processAvailable(Duration.ofMillis(250));
+                } catch (KafkaException failure) {
+                    assertEquals(
+                        "Simulated Kafka offset commit failure",
+                        failure.getMessage()
+                    );
+                    commitFailureObserved = true;
+                    break;
+                }
+            }
+        }
+
+        assertTrue(
+            commitFailureObserved,
+            "First consumer did not experience offset commit failure"
+        );
+
+        assertTrue(businessExecuted.get());
+        assertEquals(1, effectCount(eventId));
+        assertEquals(1, inboxCount(consumerName, eventId));
+
+        // Start a fresh consumer using the same group and consumer identity.
+        try (KafkaInboxConsumer restartedConsumer = newConsumer(
+            topic,
+            consumerName,
+            groupId,
+            work
+        )) {
+            awaitProcessed(restartedConsumer, 1);
+        }
+
+        assertEquals(
+            1,
+            effectCount(eventId),
+            "Business operation executed more than once after restart"
+        );
+
+        assertEquals(
+            1,
+            inboxCount(consumerName, eventId),
+            "Expected exactly one inbox record after restart"
+        );
+    }
     private static KafkaInboxConsumer newConsumer(
         String topic,
         String consumerName,
