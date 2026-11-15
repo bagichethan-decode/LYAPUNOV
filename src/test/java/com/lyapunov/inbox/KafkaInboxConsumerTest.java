@@ -3,6 +3,12 @@ package com.lyapunov.inbox;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.lang.reflect.InvocationTargetException;
+import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
@@ -322,6 +328,200 @@ class KafkaInboxConsumerTest {
                 0L,
                 mock.position(partition1),
                 "Partition 1 must rewind to its unprocessed record"
+            );
+        }
+    }
+
+    @Test
+    void redeliveredEventAfterOffsetCommitFailureDoesNotRepeatBusinessWork()
+        throws Exception {
+
+        String topic = "lyapunov-commit-failure-" + UUID.randomUUID();
+        String consumerName = "commit-recovery-" + UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+
+        Properties adminProperties = new Properties();
+        adminProperties.put(
+            AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG,
+            KAFKA.getBootstrapServers()
+        );
+
+        try (AdminClient admin = AdminClient.create(adminProperties)) {
+            admin.createTopics(
+                List.of(new NewTopic(topic, 1, (short) 1))
+            ).all().get(30, TimeUnit.SECONDS);
+        }
+
+        Properties producerProperties = new Properties();
+        producerProperties.put(
+            ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
+            KAFKA.getBootstrapServers()
+        );
+        producerProperties.put(
+            ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
+            StringSerializer.class.getName()
+        );
+        producerProperties.put(
+            ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
+            StringSerializer.class.getName()
+        );
+
+        try (KafkaProducer<String, String> producer =
+                 new KafkaProducer<>(producerProperties)) {
+
+            ProducerRecord<String, String> record =
+                new ProducerRecord<>(topic, "key-1", "{}");
+
+            record.headers().add(
+                "lyapunov-event-id",
+                eventId.toString().getBytes(StandardCharsets.UTF_8)
+            );
+
+            record.headers().add(
+                "lyapunov-event-type",
+                "ORDER_CREATED".getBytes(StandardCharsets.UTF_8)
+            );
+
+            producer.send(record).get(30, TimeUnit.SECONDS);
+        }
+
+        Properties consumerProperties = new Properties();
+        consumerProperties.put(
+            ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
+            KAFKA.getBootstrapServers()
+        );
+        consumerProperties.put(
+            ConsumerConfig.GROUP_ID_CONFIG,
+            consumerName
+        );
+        consumerProperties.put(
+            ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
+            org.apache.kafka.common.serialization.StringDeserializer.class.getName()
+        );
+        consumerProperties.put(
+            ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
+            org.apache.kafka.common.serialization.StringDeserializer.class.getName()
+        );
+        consumerProperties.put(
+            ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG,
+            "false"
+        );
+        consumerProperties.put(
+            ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
+            "earliest"
+        );
+
+        KafkaConsumer<String, String> delegate =
+            new KafkaConsumer<>(consumerProperties);
+
+        AtomicBoolean failFirstCommit = new AtomicBoolean(true);
+
+        @SuppressWarnings("unchecked")
+        Consumer<String, String> failingConsumer =
+            (Consumer<String, String>) java.lang.reflect.Proxy.newProxyInstance(
+                Consumer.class.getClassLoader(),
+                new Class<?>[] { Consumer.class },
+                (proxy, method, args) -> {
+
+                    if ("commitSync".equals(method.getName())
+                        && failFirstCommit.compareAndSet(true, false)) {
+
+                        throw new KafkaException(
+                            "Simulated Kafka offset commit failure"
+                        );
+                    }
+
+                    try {
+                        return method.invoke(delegate, args);
+                    } catch (InvocationTargetException failure) {
+                        throw failure.getCause();
+                    }
+                }
+            );
+
+        AtomicBoolean businessWorkExecuted = new AtomicBoolean(false);
+
+        try (KafkaInboxConsumer consumer = new KafkaInboxConsumer(
+            failingConsumer,
+            topic,
+            consumerName,
+            processor,
+            (connection, kafkaRecord) -> {
+
+                businessWorkExecuted.set(true);
+
+                try (PreparedStatement statement =
+                         connection.prepareStatement("""
+                             INSERT INTO inbox_test_effects
+                                 (event_id, consumer_name)
+                             VALUES (?, ?)
+                             """)) {
+
+                    statement.setObject(1, eventId);
+                    statement.setString(2, consumerName);
+                    statement.executeUpdate();
+                }
+            }
+        )) {
+
+            long deadline =
+                System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+
+            boolean commitFailureObserved = false;
+
+            while (System.nanoTime() < deadline) {
+                try {
+                    consumer.processAvailable(Duration.ofMillis(250));
+                } catch (KafkaException failure) {
+
+                    assertEquals(
+                        "Simulated Kafka offset commit failure",
+                        failure.getMessage()
+                    );
+
+                    commitFailureObserved = true;
+                    break;
+                }
+            }
+
+            assertTrue(
+                commitFailureObserved,
+                "Expected the injected offset commit failure"
+            );
+
+            assertTrue(
+                businessWorkExecuted.get(),
+                "Business work should have completed before offset commit"
+            );
+
+            assertEquals(
+                1,
+                effectCount(eventId),
+                "The database transaction must have committed"
+            );
+
+            assertEquals(
+                1,
+                inboxCount(consumerName, eventId),
+                "The inbox entry must have committed"
+            );
+
+            assertEquals(
+                1,
+                consumer.processAvailable(Duration.ofSeconds(10)),
+                "The redelivered duplicate should be recognized and committed"
+            );
+
+            assertEquals(
+                1,
+                effectCount(eventId),
+                "Redelivery must not repeat business work"
+            );
+
+            assertEquals(
+                1,
+                inboxCount(consumerName, eventId),
+                "Redelivery must not create another inbox entry"
             );
         }
     }
