@@ -1,4 +1,4 @@
-﻿CREATE TABLE IF NOT EXISTS consumer_dead_letters (
+CREATE TABLE IF NOT EXISTS consumer_dead_letters (
     id BIGSERIAL PRIMARY KEY,
     consumer_name VARCHAR(200) NOT NULL,
     topic VARCHAR(255) NOT NULL,

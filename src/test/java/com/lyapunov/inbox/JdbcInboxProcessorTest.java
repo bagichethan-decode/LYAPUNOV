@@ -57,7 +57,37 @@ class JdbcInboxProcessorTest {
                     StandardCharsets.UTF_8
                 );
 
+                if (!sql.isEmpty() && sql.charAt(0) == '\uFEFF') {
+                    sql = sql.substring(1);
+                }
+
                 statement.execute(sql);
+            }
+
+            try (InputStream migration =
+                     JdbcInboxProcessorTest.class.getResourceAsStream(
+                         "/db/migration/V008__consumer_dead_letters.sql")) {
+
+                assertNotNull(migration, "V008 dead-letter migration must exist");
+
+                String sql = new String(
+                    migration.readAllBytes(),
+                    StandardCharsets.UTF_8
+                );
+
+                if (!sql.isEmpty() && sql.charAt(0) == '\uFEFF') {
+                    sql = sql.substring(1);
+                }
+
+                statement.execute(sql);
+            }
+
+            try (ResultSet result =
+                     statement.executeQuery(
+                         "SELECT to_regclass('public.consumer_dead_letters')")) {
+                assertTrue(result.next());
+                assertEquals("consumer_dead_letters", result.getString(1),
+                    "V008 must create consumer_dead_letters");
             }
 
             statement.execute("""
@@ -82,7 +112,7 @@ class JdbcInboxProcessorTest {
         try (Connection connection = dataSource.getConnection();
              Statement statement = connection.createStatement()) {
             statement.execute("""
-                TRUNCATE TABLE inbox_test_effects, consumer_inbox
+                TRUNCATE TABLE inbox_test_effects, consumer_inbox, consumer_dead_letters
                 """);
         }
     }

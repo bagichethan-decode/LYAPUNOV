@@ -108,7 +108,7 @@ class KafkaInboxConsumerTest {
         try (Connection connection = dataSource.getConnection();
              Statement statement = connection.createStatement()) {
             statement.execute(
-                "TRUNCATE TABLE inbox_test_effects, consumer_inbox"
+                "TRUNCATE TABLE inbox_test_effects, consumer_inbox, consumer_dead_letters"
             );
         }
     }
