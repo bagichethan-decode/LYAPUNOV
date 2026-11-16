@@ -267,6 +267,152 @@ class KafkaInboxConsumerTest {
     }
 
     @Test
+    void missingEventIdHeaderIsDurablyDeadLettered() throws Exception {
+        String topic = "lyapunov-dlq-missing-id-" + UUID.randomUUID();
+        String consumerName = "dlq-missing-id-" + UUID.randomUUID();
+        TopicPartition partition = new TopicPartition(topic, 0);
+
+        MockConsumer<String, String> mock =
+            new MockConsumer<>(OffsetResetStrategy.EARLIEST);
+        mock.updateBeginningOffsets(Map.of(partition, 0L));
+
+        try (KafkaInboxConsumer consumer = new KafkaInboxConsumer(
+            mock, topic, consumerName, processor,
+            (connection, record) -> fail("Invalid record must not reach business work")
+        )) {
+            mock.rebalance(List.of(partition));
+
+            ConsumerRecord<String, String> record =
+                new ConsumerRecord<>(topic, 0, 0L, "bad-key", "{}");
+            record.headers().add(
+                "lyapunov-event-type",
+                "ORDER_CREATED".getBytes(StandardCharsets.UTF_8)
+            );
+            mock.addRecord(record);
+
+            assertEquals(1, consumer.processAvailable(Duration.ZERO));
+            assertEquals(1, deadLetterCount(consumerName, topic, 0, 0L));
+            assertEquals(0, inboxCountForConsumer(consumerName));
+            assertEquals(1L, mock.committed(partition).offset());
+        }
+    }
+
+    @Test
+    void invalidEventIdHeaderIsDurablyDeadLettered() throws Exception {
+        String topic = "lyapunov-dlq-invalid-id-" + UUID.randomUUID();
+        String consumerName = "dlq-invalid-id-" + UUID.randomUUID();
+        TopicPartition partition = new TopicPartition(topic, 0);
+
+        MockConsumer<String, String> mock =
+            new MockConsumer<>(OffsetResetStrategy.EARLIEST);
+        mock.updateBeginningOffsets(Map.of(partition, 0L));
+
+        try (KafkaInboxConsumer consumer = new KafkaInboxConsumer(
+            mock, topic, consumerName, processor,
+            (connection, record) -> fail("Invalid record must not reach business work")
+        )) {
+            mock.rebalance(List.of(partition));
+
+            ConsumerRecord<String, String> record =
+                new ConsumerRecord<>(topic, 0, 0L, "bad-key", "{}");
+            record.headers().add(
+                "lyapunov-event-id",
+                "not-a-uuid".getBytes(StandardCharsets.UTF_8)
+            );
+            record.headers().add(
+                "lyapunov-event-type",
+                "ORDER_CREATED".getBytes(StandardCharsets.UTF_8)
+            );
+            mock.addRecord(record);
+
+            assertEquals(1, consumer.processAvailable(Duration.ZERO));
+            assertEquals(1, deadLetterCount(consumerName, topic, 0, 0L));
+            assertEquals(1L, mock.committed(partition).offset());
+        }
+    }
+
+    @Test
+    void blankEventTypeHeaderIsDurablyDeadLettered() throws Exception {
+        String topic = "lyapunov-dlq-blank-type-" + UUID.randomUUID();
+        String consumerName = "dlq-blank-type-" + UUID.randomUUID();
+        TopicPartition partition = new TopicPartition(topic, 0);
+
+        MockConsumer<String, String> mock =
+            new MockConsumer<>(OffsetResetStrategy.EARLIEST);
+        mock.updateBeginningOffsets(Map.of(partition, 0L));
+
+        try (KafkaInboxConsumer consumer = new KafkaInboxConsumer(
+            mock, topic, consumerName, processor,
+            (connection, record) -> fail("Invalid record must not reach business work")
+        )) {
+            mock.rebalance(List.of(partition));
+
+            ConsumerRecord<String, String> record =
+                new ConsumerRecord<>(topic, 0, 0L, "bad-key", "{}");
+            record.headers().add(
+                "lyapunov-event-id",
+                UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8)
+            );
+            record.headers().add(
+                "lyapunov-event-type",
+                "   ".getBytes(StandardCharsets.UTF_8)
+            );
+            mock.addRecord(record);
+
+            assertEquals(1, consumer.processAvailable(Duration.ZERO));
+            assertEquals(1, deadLetterCount(consumerName, topic, 0, 0L));
+            assertEquals(1L, mock.committed(partition).offset());
+        }
+    }
+
+    @Test
+    void validEventAfterMalformedEventIsStillProcessed() throws Exception {
+        String topic = "lyapunov-dlq-then-valid-" + UUID.randomUUID();
+        String consumerName = "dlq-then-valid-" + UUID.randomUUID();
+        TopicPartition partition = new TopicPartition(topic, 0);
+        UUID validEventId = UUID.randomUUID();
+
+        MockConsumer<String, String> mock =
+            new MockConsumer<>(OffsetResetStrategy.EARLIEST);
+        mock.updateBeginningOffsets(Map.of(partition, 0L));
+
+        try (KafkaInboxConsumer consumer = new KafkaInboxConsumer(
+            mock, topic, consumerName, processor,
+            (connection, record) -> insertEffect(
+                connection, consumerName, validEventId
+            )
+        )) {
+            mock.rebalance(List.of(partition));
+
+            ConsumerRecord<String, String> malformed =
+                new ConsumerRecord<>(topic, 0, 0L, "bad-key", "{}");
+            malformed.headers().add(
+                "lyapunov-event-type",
+                "ORDER_CREATED".getBytes(StandardCharsets.UTF_8)
+            );
+
+            ConsumerRecord<String, String> valid =
+                new ConsumerRecord<>(topic, 0, 1L, "valid-key", "{}");
+            valid.headers().add(
+                "lyapunov-event-id",
+                validEventId.toString().getBytes(StandardCharsets.UTF_8)
+            );
+            valid.headers().add(
+                "lyapunov-event-type",
+                "ORDER_CREATED".getBytes(StandardCharsets.UTF_8)
+            );
+
+            mock.addRecord(malformed);
+            mock.addRecord(valid);
+
+            assertEquals(2, consumer.processAvailable(Duration.ZERO));
+            assertEquals(1, deadLetterCount(consumerName, topic, 0, 0L));
+            assertEquals(1, inboxCount(consumerName, validEventId));
+            assertEquals(1, effectCount(validEventId));
+            assertEquals(2L, mock.committed(partition).offset());
+        }
+    }
+    @Test
     void rewindsEveryUncommittedPartitionWhenFirstRecordFails()
         throws Exception {
 
@@ -899,6 +1045,49 @@ class KafkaInboxConsumerTest {
         }
     }
 
+    private static int deadLetterCount(
+        String consumerName,
+        String topic,
+        int partition,
+        long offset
+    ) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                 SELECT COUNT(*)
+                 FROM consumer_dead_letters
+                 WHERE consumer_name = ?
+                   AND topic = ?
+                   AND partition_id = ?
+                   AND message_offset = ?
+                 """)) {
+            statement.setString(1, consumerName);
+            statement.setString(2, topic);
+            statement.setInt(3, partition);
+            statement.setLong(4, offset);
+
+            try (ResultSet result = statement.executeQuery()) {
+                result.next();
+                return result.getInt(1);
+            }
+        }
+    }
+
+    private static int inboxCountForConsumer(String consumerName)
+        throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                 SELECT COUNT(*)
+                 FROM consumer_inbox
+                 WHERE consumer_name = ?
+                 """)) {
+            statement.setString(1, consumerName);
+
+            try (ResultSet result = statement.executeQuery()) {
+                result.next();
+                return result.getInt(1);
+            }
+        }
+    }
     private static boolean isProcessed(
         String consumer,
         UUID eventId
