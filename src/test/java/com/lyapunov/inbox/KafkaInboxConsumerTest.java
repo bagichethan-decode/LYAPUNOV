@@ -87,6 +87,37 @@ class KafkaInboxConsumerTest {
                 )
             );
 
+
+            try (InputStream deadLetterMigration =
+                     KafkaInboxConsumerTest.class.getResourceAsStream(
+                         "/db/migration/V008__consumer_dead_letters.sql"
+                     )) {
+                assertNotNull(deadLetterMigration,
+                    "V008 dead-letter migration must exist");
+
+                String sql = new String(
+                    deadLetterMigration.readAllBytes(),
+                    StandardCharsets.UTF_8
+                );
+
+                if (!sql.isEmpty() && sql.charAt(0) == '\uFEFF') {
+                    sql = sql.substring(1);
+                }
+
+                statement.execute(sql);
+            }
+
+            try (ResultSet result = statement.executeQuery(
+                "SELECT to_regclass('public.consumer_dead_letters')"
+            )) {
+                assertTrue(result.next());
+                assertEquals(
+                    "consumer_dead_letters",
+                    result.getString(1),
+                    "V008 must create consumer_dead_letters"
+                );
+            }
+
             statement.execute("""
                 CREATE TABLE IF NOT EXISTS inbox_test_effects (
                     id BIGSERIAL PRIMARY KEY,
