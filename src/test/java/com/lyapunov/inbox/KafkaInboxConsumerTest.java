@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
+import java.lang.reflect.Proxy;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -411,6 +412,90 @@ class KafkaInboxConsumerTest {
             assertEquals(1, effectCount(validEventId));
             assertEquals(2L, mock.committed(partition).offset());
         }
+    }
+    @Test
+    void deadLetterPersistenceFailureDoesNotCommitOffset() throws Exception {
+        String topic = "lyapunov-dlq-db-failure-" + UUID.randomUUID();
+        String consumerName = "dlq-db-failure-" + UUID.randomUUID();
+        TopicPartition partition = new TopicPartition(topic, 0);
+
+        DataSource failingDataSource = (DataSource) Proxy.newProxyInstance(
+            DataSource.class.getClassLoader(),
+            new Class<?>[]{DataSource.class},
+            (proxy, method, args) -> {
+                if ("getConnection".equals(method.getName())) {
+                    throw new SQLException("Simulated database outage");
+                }
+                throw new UnsupportedOperationException(method.getName());
+            }
+        );
+
+        JdbcInboxProcessor failingProcessor =
+            new JdbcInboxProcessor(failingDataSource);
+
+        MockConsumer<String, String> mock =
+            new MockConsumer<>(OffsetResetStrategy.EARLIEST);
+        mock.updateBeginningOffsets(Map.of(partition, 0L));
+
+        try (KafkaInboxConsumer consumer = new KafkaInboxConsumer(
+            mock,
+            topic,
+            consumerName,
+            failingProcessor,
+            (connection, record) ->
+                fail("Malformed record must not reach business work")
+        )) {
+            mock.rebalance(List.of(partition));
+
+            ConsumerRecord<String, String> malformed =
+                new ConsumerRecord<>(topic, 0, 0L, "bad-key", "{}");
+            malformed.headers().add(
+                "lyapunov-event-type",
+                "ORDER_CREATED".getBytes(StandardCharsets.UTF_8)
+            );
+            mock.addRecord(malformed);
+
+            SQLException failure = assertThrows(
+                SQLException.class,
+                () -> consumer.processAvailable(Duration.ZERO)
+            );
+
+            assertEquals("Simulated database outage", failure.getMessage());
+            assertEquals(1, failure.getSuppressed().length,
+                "Validation failure should be retained as suppressed context");
+
+            assertEquals(
+                0L,
+                mock.position(partition),
+                "Failed dead-letter persistence must rewind the record"
+            );
+
+            assertNull(
+                mock.committed(partition),
+                "Kafka offset must not be committed before DLQ persistence"
+            );
+        }
+    }
+
+    @Test
+    void duplicateDeadLetterPersistenceIsIdempotent() throws Exception {
+        String topic = "lyapunov-dlq-idempotent-" + UUID.randomUUID();
+        String consumerName = "dlq-idempotent-" + UUID.randomUUID();
+
+        ConsumerRecord<String, String> malformed =
+            new ConsumerRecord<>(topic, 0, 42L, "bad-key", "{}");
+
+        IllegalArgumentException failure =
+            new IllegalArgumentException("Missing required Kafka header");
+
+        processor.recordDeadLetter(consumerName, malformed, failure);
+        processor.recordDeadLetter(consumerName, malformed, failure);
+
+        assertEquals(
+            1,
+            deadLetterCount(consumerName, topic, 0, 42L),
+            "Repeated persistence of the same Kafka record must create one DLQ row"
+        );
     }
     @Test
     void rewindsEveryUncommittedPartitionWhenFirstRecordFails()
