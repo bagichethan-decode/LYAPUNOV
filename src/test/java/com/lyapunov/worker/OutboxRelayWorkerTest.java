@@ -54,6 +54,35 @@ class OutboxRelayWorkerTest {
     }
 
     @Test
+    void failurePersistenceErrorDoesNotBlockSubsequentEvents() throws Exception {
+        FakeStore store = new FakeStore();
+        OutboxEvent failedEvent = event();
+        OutboxEvent succeedingEvent = event();
+        store.events = List.of(failedEvent, succeedingEvent);
+        store.failFailurePersistence = true;
+
+        List<UUID> sent = new ArrayList<>();
+        EventPublisher publisher = new EventPublisher() {
+            public void publish(OutboxEvent value) throws Exception {
+                if (value.id().equals(failedEvent.id())) {
+                    throw new Exception("broker unavailable");
+                }
+                sent.add(value.id());
+            }
+            public void close() {}
+        };
+
+        OutboxRelayWorker worker = worker(store, publisher);
+
+        assertEquals(2, worker.runOneCycle());
+        assertEquals(1, store.failurePersistenceAttempts);
+        assertTrue(store.failed.isEmpty());
+        assertEquals(List.of(succeedingEvent.id()), sent);
+        assertEquals(List.of(succeedingEvent.id()), store.published);
+        assertEquals(1, worker.failedCount());
+        assertEquals(1, worker.publishedCount());
+    }
+    @Test
     void countsStaleClaimWhenDatabaseRejectsCompletion() throws Exception {
         FakeStore store = new FakeStore();
         store.events = List.of(event());
@@ -162,6 +191,8 @@ class OutboxRelayWorkerTest {
         List<UUID> published = new ArrayList<>();
         List<UUID> failed = new ArrayList<>();
         boolean acceptPublished = true;
+    boolean failFailurePersistence;
+    int failurePersistenceAttempts;
 
         public List<OutboxEvent> claim(String workerId, int batchSize, Duration leaseDuration) { return events; }
         public boolean published(UUID id, String workerId, UUID token) {
@@ -169,6 +200,17 @@ class OutboxRelayWorkerTest {
             return acceptPublished;
         }
         public boolean failed(UUID id, String workerId, UUID token, int maxRetries) {
+            failed.add(id);
+            return true;
+        }
+
+        @Override
+        public boolean failed(UUID id, String workerId, UUID token, int maxRetries,
+                              Duration baseRetryDelay, Duration maxRetryDelay) {
+            failurePersistenceAttempts++;
+            if (failFailurePersistence) {
+                throw new IllegalStateException("retry state database unavailable");
+            }
             failed.add(id);
             return true;
         }
