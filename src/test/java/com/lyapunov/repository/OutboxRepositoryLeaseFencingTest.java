@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OutboxRepositoryLeaseFencingTest {
@@ -217,25 +218,25 @@ class OutboxRepositoryLeaseFencingTest {
         }
     }
 @Test
-void rejectsLeaseDurationsBelowPostgresTimestampPrecision() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> repository.claimPendingEvents(
-            "worker-submicro",
-            1,
-            Duration.ofNanos(999)
-        )
-    );
+    void rejectsLeaseDurationsBelowPostgresTimestampPrecision() throws Exception {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> repository.claimPendingEvents(
+                "worker-submicro",
+                1,
+                Duration.ofNanos(999)
+            )
+        );
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> repository.claimPendingEvents(
-            "worker-submicro",
-            1,
-            Duration.ofNanos(1)
-        )
-    );
-}
+        assertTrue(
+            repository.claimPendingEvents(
+                "worker-minimum",
+                1,
+                Duration.ofNanos(1_000)
+            ).isEmpty(),
+            "Exactly one microsecond must be accepted"
+        );
+    }
     private static void assertDatabaseState(
         String expectedStatus,
         int expectedRetryCount,
