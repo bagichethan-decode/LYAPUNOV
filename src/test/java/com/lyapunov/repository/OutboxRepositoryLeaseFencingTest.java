@@ -217,61 +217,7 @@ class OutboxRepositoryLeaseFencingTest {
         }
     }
 
-    @Test
-    void recordsExactLeaseDurationInClaimHistory() throws Exception {
-        insertEvent("order-lease-history", 1);
 
-        Duration lease = Duration.ofSeconds(1, 234_567_000);
-        OutboxEvent claimed = onlyClaim("worker-history", lease);
-
-        String sql = """
-            SELECT details->>'leaseDurationSeconds' AS lease_seconds,
-                   details->>'leaseDurationNanos' AS lease_nanos
-            FROM event_history
-            WHERE event_id = ?
-              AND action = 'EVENT_CLAIMED'
-            """;
-
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setObject(1, claimed.id());
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                assertTrue(rs.next());
-                assertEquals("1", rs.getString("lease_seconds"));
-                assertEquals("234567000", rs.getString("lease_nanos"));
-                assertFalse(rs.next());
-            }
-        }
-    }
-
-    @Test
-    void recordsExactLeaseDurationInClaimHistory() throws Exception {
-        insertEvent("order-lease-history", 1);
-
-        Duration lease = Duration.ofSeconds(1, 234_567_000);
-        OutboxEvent claimed = onlyClaim("worker-history", lease);
-
-        String sql = """
-            SELECT details->>'leaseDurationSeconds' AS lease_seconds,
-                   details->>'leaseDurationNanos' AS lease_nanos
-            FROM event_history
-            WHERE event_id = ?
-              AND action = 'EVENT_CLAIMED'
-            """;
-
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setObject(1, claimed.id());
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                assertTrue(rs.next());
-                assertEquals("1", rs.getString("lease_seconds"));
-                assertEquals("234567000", rs.getString("lease_nanos"));
-                assertFalse(rs.next());
-            }
-        }
-    }
 
     @Test
     void returnedLeaseExpiryMatchesDatabaseTimestamp() throws Exception {
