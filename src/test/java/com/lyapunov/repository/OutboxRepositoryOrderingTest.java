@@ -187,4 +187,61 @@ class OutboxRepositoryOrderingTest {
             "Workers should claim different aggregates"
         );
     }
-}
+
+    @Test
+    void concurrentWorkersClaimDifferentAggregatesWithoutDuplicates()
+            throws Exception {
+
+        insertEvent("order-1", 1);
+        insertEvent("order-1", 2);
+        insertEvent("order-2", 1);
+        insertEvent("order-2", 2);
+
+        var ready = new java.util.concurrent.CountDownLatch(2);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+
+        try {
+            var workerA = executor.submit(() -> {
+                ready.countDown();
+                if (!start.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Worker A start timed out");
+                }
+                return repository.claimPendingEvents(
+                    "concurrent-A", 1, Duration.ofSeconds(30));
+            });
+
+            var workerB = executor.submit(() -> {
+                ready.countDown();
+                if (!start.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Worker B start timed out");
+                }
+                return repository.claimPendingEvents(
+                    "concurrent-B", 1, Duration.ofSeconds(30));
+            });
+
+            assertTrue(ready.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            start.countDown();
+
+            List<OutboxEvent> claimsA =
+                workerA.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            List<OutboxEvent> claimsB =
+                workerB.get(30, java.util.concurrent.TimeUnit.SECONDS);
+
+            assertEquals(1, claimsA.size());
+            assertEquals(1, claimsB.size());
+
+            OutboxEvent eventA = claimsA.get(0);
+            OutboxEvent eventB = claimsB.get(0);
+
+            assertNotEquals(eventA.id(), eventB.id());
+            assertNotEquals(eventA.aggregateId(), eventB.aggregateId());
+            assertEquals(1L, eventA.sequenceNumber());
+            assertEquals(1L, eventB.sequenceNumber());
+            assertNotEquals(eventA.claimToken(), eventB.claimToken());
+
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
+    }}
