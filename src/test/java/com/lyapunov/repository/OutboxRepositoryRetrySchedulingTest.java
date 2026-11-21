@@ -252,7 +252,7 @@ class OutboxRepositoryRetrySchedulingTest {
              ResultSet rs = stmt.executeQuery()) {
 
             assertTrue(rs.next());
-            assertEquals("864000000000000000", rs.getString(1));
+            assertEquals("2592000000000000", rs.getString(1));
             assertFalse(rs.next());
         }
     }

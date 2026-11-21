@@ -477,15 +477,20 @@ UPDATE outbox_events
                     int nextRetryCount = event.retryCount() + 1;
                     String nextStatus = nextRetryCount >= maxRetries ? "DEAD" : "PENDING";
 
-                    long retryDelayMillis = calculateRetryDelayMillis(
+                    long retryDelayMicros = calculateRetryDelayMicros(
                         nextRetryCount, baseRetryDelay, maxRetryDelay
                     );
+
+                    long retryDelaySeconds = retryDelayMicros / 1_000_000L;
+                    long remainingRetryMicros = retryDelayMicros % 1_000_000L;
+
                     updateStmt.setInt(1, maxRetries);
                     updateStmt.setInt(2, maxRetries);
-                    updateStmt.setLong(3, retryDelayMillis);
-                    updateStmt.setObject(4, eventId);
-                    updateStmt.setString(5, workerId);
-                    updateStmt.setObject(6, claimToken);
+                    updateStmt.setLong(3, retryDelaySeconds);
+                    updateStmt.setLong(4, remainingRetryMicros);
+                    updateStmt.setObject(5, eventId);
+                    updateStmt.setString(6, workerId);
+                    updateStmt.setObject(7, claimToken);
                     if (updateStmt.executeUpdate() != 1) {
                         conn.commit();
                         return false;
@@ -643,22 +648,46 @@ UPDATE outbox_events
         }
     }
 
-    private static long calculateRetryDelayMillis(
+    private static long calculateRetryDelayMicros(
         int retryCount,
         Duration baseRetryDelay,
         Duration maxRetryDelay
     ) {
-        long base = baseRetryDelay.toMillis();
-        long maximum = maxRetryDelay.toMillis();
-        if (base == 0 || maximum == 0) return 0;
-        long delay = base;
+        long base = durationToMicrosSaturated(baseRetryDelay);
+        long maximum = durationToMicrosSaturated(maxRetryDelay);
+
+        if (base == 0 || maximum == 0) {
+            return 0;
+        }
+
+        long delay = Math.min(base, maximum);
+
         for (int attempt = 1; attempt < retryCount && delay < maximum; attempt++) {
-            if (delay > maximum / 2) return maximum;
+            if (delay > maximum / 2) {
+                return maximum;
+            }
             delay *= 2;
         }
+
         return Math.min(delay, maximum);
     }
 
+    private static long durationToMicrosSaturated(Duration duration) {
+        long seconds = duration.getSeconds();
+
+        if (seconds > Long.MAX_VALUE / 1_000_000L) {
+            return Long.MAX_VALUE;
+        }
+
+        long microsFromSeconds = seconds * 1_000_000L;
+        long fractionalMicros = duration.getNano() / 1_000L;
+
+        if (microsFromSeconds > Long.MAX_VALUE - fractionalMicros) {
+            return Long.MAX_VALUE;
+        }
+
+        return microsFromSeconds + fractionalMicros;
+    }
     private static void validateOperatorActionArguments(UUID eventId, String operatorId, String reason) {
         if (eventId == null) {
             throw new IllegalArgumentException("eventId must not be null");
