@@ -441,7 +441,9 @@ UPDATE outbox_events
                 status = CASE WHEN retry_count + 1 >= ? THEN 'DEAD' ELSE 'PENDING' END,
                 next_attempt_at = CASE
                     WHEN retry_count + 1 >= ? THEN NULL
-                    ELSE clock_timestamp() + (? * INTERVAL '1 millisecond')
+                    ELSE clock_timestamp()
+                        + (? * INTERVAL '1 second')
+                        + (? * INTERVAL '1 microsecond')
                 END,
                 claimed_by = NULL,
                 claim_token = NULL,
