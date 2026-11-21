@@ -186,4 +186,40 @@ class OutboxRepositoryLeaseFencingTest {
             assertFalse(rs.next(), "Only one test outbox row should exist");
         }
     }
-}
+
+    @Test
+    void expiredClaimCanBeReclaimedByDifferentWorkerAndFencesOriginalWorker()
+            throws Exception {
+        insertEvent("order-cross-worker", 1);
+
+        OutboxEvent oldClaim = onlyClaim("worker-A", Duration.ofMillis(100));
+
+        Thread.sleep(300);
+
+        OutboxEvent newClaim = onlyClaim("worker-B", Duration.ofSeconds(10));
+
+        assertEquals(oldClaim.id(), newClaim.id());
+        assertNotEquals(oldClaim.claimToken(), newClaim.claimToken());
+
+        assertFalse(repository.markPublished(
+            oldClaim.id(), "worker-A", oldClaim.claimToken()
+        ));
+
+        assertFalse(repository.recordFailure(
+            oldClaim.id(), "worker-A", oldClaim.claimToken(), 3
+        ));
+
+        assertDatabaseState(
+            "CLAIMED", 0, "worker-B", newClaim.claimToken()
+        );
+
+        assertEquals(0, countHistory("EVENT_PUBLISHED"));
+        assertEquals(0, countHistory("EVENT_FAILED"));
+
+        assertTrue(repository.markPublished(
+            newClaim.id(), "worker-B", newClaim.claimToken()
+        ));
+
+        assertDatabaseState("PUBLISHED", 0, null, null);
+        assertEquals(1, countHistory("EVENT_PUBLISHED"));
+    }}
