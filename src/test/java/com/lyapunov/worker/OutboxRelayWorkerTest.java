@@ -139,6 +139,27 @@ class OutboxRelayWorkerTest {
         assertEquals(1, heartbeats.stopAttempts.get());
     }
 
+    @Test
+    void completionPersistenceFailureDoesNotBlockSubsequentEvents() throws Exception {
+        FakeStore store = new FakeStore();
+        OutboxEvent first = event();
+        OutboxEvent second = event();
+        store.events = List.of(first, second);
+        store.publishedPersistenceFailureId = first.id();
+        List<UUID> sent = new ArrayList<>();
+        EventPublisher publisher = new EventPublisher() {
+            public void publish(OutboxEvent value) { sent.add(value.id()); }
+            public void close() {}
+        };
+        OutboxRelayWorker worker = worker(store, publisher);
+        assertEquals(2, worker.runOneCycle());
+        assertEquals(List.of(first.id(), second.id()), sent);
+        assertEquals(List.of(first.id()), store.failed);
+        assertEquals(List.of(second.id()), store.published);
+        assertEquals(1, store.failurePersistenceAttempts);
+        assertEquals(1, worker.failedCount());
+        assertEquals(1, worker.publishedCount());
+    }
     private static OutboxRelayWorker worker(FakeStore store, EventPublisher publisher) {
         return new OutboxRelayWorker(store, publisher, "test-worker", 10, 5,
             Duration.ofSeconds(30), Duration.ofMillis(10));
@@ -191,11 +212,15 @@ class OutboxRelayWorkerTest {
         List<UUID> published = new ArrayList<>();
         List<UUID> failed = new ArrayList<>();
         boolean acceptPublished = true;
+        UUID publishedPersistenceFailureId;
     boolean failFailurePersistence;
     int failurePersistenceAttempts;
 
         public List<OutboxEvent> claim(String workerId, int batchSize, Duration leaseDuration) { return events; }
         public boolean published(UUID id, String workerId, UUID token) {
+            if (id.equals(publishedPersistenceFailureId)) {
+                throw new IllegalStateException("published state database unavailable");
+            }
             if (acceptPublished) published.add(id);
             return acceptPublished;
         }
