@@ -170,11 +170,11 @@ public class OutboxRepository {
             throw new IllegalArgumentException("leaseDuration must be positive");
         }
 
-if (leaseDuration.compareTo(Duration.ofNanos(1_000)) < 0) {
-    throw new IllegalArgumentException(
-        "leaseDuration must be at least one microsecond"
-    );
-}
+        if (leaseDuration.compareTo(Duration.ofNanos(1_000)) < 0) {
+            throw new IllegalArgumentException(
+                "leaseDuration must be at least one microsecond"
+            );
+        }
 
         String selectSql = """
             SELECT e.id, e.aggregate_type, e.aggregate_id, e.sequence_number, e.event_type,
@@ -496,7 +496,8 @@ UPDATE outbox_events
                         workerId,
                         "{\"retryCount\":" + nextRetryCount +
                             ",\"nextStatus\":\"" + nextStatus +
-                            "\",\"retryDelayMillis\":" + retryDelayMillis + "}"
+                            "\",\"retryDelayMillis\":" + (retryDelayMicros / 1_000L) +
+                            ",\"retryDelayMicros\":" + retryDelayMicros + "}"
                     );
                 }
 

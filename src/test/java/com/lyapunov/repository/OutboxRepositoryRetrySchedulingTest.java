@@ -149,4 +149,111 @@ class OutboxRepositoryRetrySchedulingTest {
             assertNull(rs.getTimestamp("next_attempt_at"));
         }
     }
+
+    @Test
+    void retryDelayPreservesMicrosecondPrecision() throws Exception {
+        insertEvent();
+
+        OutboxEvent claim = repository.claimPendingEvents(
+            "worker-precision", 1, Duration.ofSeconds(30)
+        ).get(0);
+
+        assertTrue(repository.recordFailure(
+            claim.id(),
+            "worker-precision",
+            claim.claimToken(),
+            5,
+            Duration.ofNanos(1_500_000),
+            Duration.ofMillis(10)
+        ));
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("""
+                 SELECT details->>'retryDelayMicros' AS retry_micros,
+                        details->>'retryDelayMillis' AS retry_millis
+                 FROM event_history
+                 WHERE action = 'EVENT_FAILED'
+                 """);
+             ResultSet rs = stmt.executeQuery()) {
+
+            assertTrue(rs.next());
+            assertEquals("1500", rs.getString("retry_micros"));
+            assertEquals("1", rs.getString("retry_millis"));
+            assertFalse(rs.next());
+        }
+    }
+
+    @Test
+    void retryDelayDoublesAtMicrosecondPrecision() throws Exception {
+        insertEvent();
+
+        OutboxEvent first = repository.claimPendingEvents(
+            "worker-micro", 1, Duration.ofSeconds(30)
+        ).get(0);
+
+        assertTrue(repository.recordFailure(
+            first.id(), "worker-micro", first.claimToken(), 5,
+            Duration.ofNanos(1_500_000), Duration.ofNanos(10_000_000)
+        ));
+
+        makeRetryDue();
+
+        OutboxEvent second = repository.claimPendingEvents(
+            "worker-micro", 1, Duration.ofSeconds(30)
+        ).get(0);
+
+        assertTrue(repository.recordFailure(
+            second.id(), "worker-micro", second.claimToken(), 5,
+            Duration.ofNanos(1_500_000), Duration.ofNanos(10_000_000)
+        ));
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("""
+                 SELECT details->>'retryDelayMicros'
+                 FROM event_history
+                 WHERE action = 'EVENT_FAILED'
+                 ORDER BY occurred_at ASC
+                 """);
+             ResultSet rs = stmt.executeQuery()) {
+
+            assertTrue(rs.next());
+            assertEquals("1500", rs.getString(1));
+
+            assertTrue(rs.next());
+            assertEquals("3000", rs.getString(1));
+
+            assertFalse(rs.next());
+        }
+    }
+
+    @Test
+    void retryDelayIsCappedForLargeDurations() throws Exception {
+        insertEvent();
+
+        OutboxEvent claim = repository.claimPendingEvents(
+            "worker-large-delay", 1, Duration.ofSeconds(30)
+        ).get(0);
+
+        assertTrue(repository.recordFailure(
+            claim.id(),
+            "worker-large-delay",
+            claim.claimToken(),
+            5,
+            Duration.ofDays(10_000),
+            Duration.ofDays(30_000)
+        ));
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("""
+                 SELECT details->>'retryDelayMicros'
+                 FROM event_history
+                 WHERE action = 'EVENT_FAILED'
+                 """);
+             ResultSet rs = stmt.executeQuery()) {
+
+            assertTrue(rs.next());
+            assertEquals("2592000000000000", rs.getString(1));
+            assertFalse(rs.next());
+        }
+    }
 }
