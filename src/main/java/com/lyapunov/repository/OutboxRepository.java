@@ -170,6 +170,12 @@ public class OutboxRepository {
             throw new IllegalArgumentException("leaseDuration must be positive");
         }
 
+if (leaseDuration.compareTo(Duration.ofNanos(1_000)) < 0) {
+    throw new IllegalArgumentException(
+        "leaseDuration must be at least one microsecond"
+    );
+}
+
         String selectSql = """
             SELECT e.id, e.aggregate_type, e.aggregate_id, e.sequence_number, e.event_type,
                    e.payload, e.status, e.retry_count, e.claimed_by, e.claim_token,

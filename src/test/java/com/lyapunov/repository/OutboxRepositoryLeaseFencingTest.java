@@ -216,6 +216,26 @@ class OutboxRepositoryLeaseFencingTest {
             }
         }
     }
+@Test
+void rejectsLeaseDurationsBelowPostgresTimestampPrecision() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> repository.claimPendingEvents(
+            "worker-submicro",
+            1,
+            Duration.ofNanos(999)
+        )
+    );
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> repository.claimPendingEvents(
+            "worker-submicro",
+            1,
+            Duration.ofNanos(1)
+        )
+    );
+}
     private static void assertDatabaseState(
         String expectedStatus,
         int expectedRetryCount,
