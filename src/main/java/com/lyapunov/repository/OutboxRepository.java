@@ -289,7 +289,8 @@ if (leaseDuration.compareTo(Duration.ofNanos(1_000)) < 0) {
                         event,
                         "EVENT_CLAIMED",
                         workerId,
-                        "{\"leaseDurationMillis\":" + leaseDuration.toMillis() +
+                        "{\"leaseDurationSeconds\":" + leaseDuration.getSeconds() +
+                            ",\"leaseDurationNanos\":" + leaseDuration.getNano() +
                             ",\"claimToken\":\"" + event.claimToken() + "\"}"
                     );
                 }
