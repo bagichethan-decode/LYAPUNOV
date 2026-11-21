@@ -188,6 +188,34 @@ class OutboxRepositoryLeaseFencingTest {
         assertDatabaseState("PUBLISHED", 0, null, null);
         assertEquals(1, countHistory("EVENT_PUBLISHED"));
     }
+    @Test
+    void returnedLeaseExpiryMatchesDatabaseTimestamp() throws Exception {
+        insertEvent("order-database-clock", 1);
+
+        OutboxEvent claimed = onlyClaim("worker-clock", Duration.ofSeconds(30));
+
+        String sql = """
+            SELECT lease_expires_at
+            FROM outbox_events
+            WHERE id = ?
+              AND claim_token = ?
+            """;
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setObject(1, claimed.id());
+            stmt.setObject(2, claimed.claimToken());
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals(
+                    rs.getTimestamp("lease_expires_at").toInstant(),
+                    claimed.leaseExpiresAt(),
+                    "Returned lease expiry must match the database timestamp"
+                );
+            }
+        }
+    }
     private static void assertDatabaseState(
         String expectedStatus,
         int expectedRetryCount,
