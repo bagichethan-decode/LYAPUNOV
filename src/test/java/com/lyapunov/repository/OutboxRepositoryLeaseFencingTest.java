@@ -160,6 +160,34 @@ class OutboxRepositoryLeaseFencingTest {
         assertEquals(1, countHistory("EVENT_PUBLISHED"));
     }
 
+    @Test
+    void activeLeaseCannotBeClaimedByAnotherWorker() throws Exception {
+        insertEvent("order-active-lease", 1);
+
+        OutboxEvent originalClaim =
+            onlyClaim("worker-A", Duration.ofSeconds(30));
+
+        var competingClaims = repository.claimPendingEvents(
+            "worker-B", 1, Duration.ofSeconds(30)
+        );
+
+        assertTrue(competingClaims.isEmpty(),
+            "Another worker must not claim an event with an active lease");
+
+        assertDatabaseState(
+            "CLAIMED", 0, "worker-A", originalClaim.claimToken()
+        );
+
+        assertEquals(0, countHistory("EVENT_PUBLISHED"));
+        assertEquals(0, countHistory("EVENT_FAILED"));
+
+        assertTrue(repository.markPublished(
+            originalClaim.id(), "worker-A", originalClaim.claimToken()
+        ));
+
+        assertDatabaseState("PUBLISHED", 0, null, null);
+        assertEquals(1, countHistory("EVENT_PUBLISHED"));
+    }
     private static void assertDatabaseState(
         String expectedStatus,
         int expectedRetryCount,
