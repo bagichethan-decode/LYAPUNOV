@@ -1,6 +1,7 @@
 package com.lyapunov.worker;
 
 import com.lyapunov.model.OutboxEvent;
+import com.lyapunov.failure.FailureFingerprint;
 import com.lyapunov.model.OutboxEvent.EventStatus;
 import com.lyapunov.repository.WorkerHeartbeatStore;
 import org.junit.jupiter.api.Test;
@@ -50,6 +51,31 @@ class OutboxRelayWorkerTest {
         assertEquals(1, worker.runOneCycle());
         assertEquals(1, store.failed.size());
         assertTrue(store.published.isEmpty());
+        assertEquals(1, worker.failedCount());
+        assertEquals(1, store.failureFingerprintAttempts);
+        assertEquals(1, store.fingerprints.size());
+        assertEquals("Exception", store.fingerprints.get(0).exceptionType());
+        assertEquals("broker unavailable", store.fingerprints.get(0).normalizedMessage());
+    }
+
+    @Test
+    void fingerprintPersistenceFailureDoesNotBlockRetryPersistence() throws Exception {
+        FakeStore store = new FakeStore();
+        OutboxEvent event = event();
+        store.events = List.of(event);
+        store.failFingerprintPersistence = true;
+        EventPublisher publisher = new EventPublisher() {
+            public void publish(OutboxEvent value) throws Exception {
+                throw new Exception("broker unavailable");
+            }
+            public void close() {}
+        };
+
+        OutboxRelayWorker worker = worker(store, publisher);
+        assertEquals(1, worker.runOneCycle());
+        assertEquals(1, store.failureFingerprintAttempts);
+        assertEquals(1, store.failurePersistenceAttempts);
+        assertEquals(List.of(event.id()), store.failed);
         assertEquals(1, worker.failedCount());
     }
 

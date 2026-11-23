@@ -1,6 +1,7 @@
 package com.lyapunov.worker;
 
 import com.lyapunov.model.OutboxEvent;
+import com.lyapunov.failure.FailureFingerprint;
 import com.lyapunov.repository.OutboxRepository;
 
 import java.time.Duration;
@@ -35,5 +36,12 @@ public final class JdbcOutboxStore implements OutboxStore {
                           Duration baseRetryDelay, Duration maxRetryDelay) throws Exception {
         return repository.recordFailure(eventId, workerId, claimToken, maxRetries,
             baseRetryDelay, maxRetryDelay);
+    }
+
+    @Override
+    public void recordFailureFingerprint(
+        OutboxEvent event, String workerId, FailureFingerprint fingerprint
+    ) throws Exception {
+        repository.recordFailureFingerprint(event, workerId, fingerprint);
     }
 }

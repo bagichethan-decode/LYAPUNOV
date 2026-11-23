@@ -1,6 +1,7 @@
 package com.lyapunov.repository;
 
 import com.lyapunov.model.OutboxEvent;
+import com.lyapunov.failure.FailureFingerprint;
 import com.lyapunov.model.OutboxEvent.EventStatus;
 
 import javax.sql.DataSource;
@@ -524,6 +525,23 @@ UPDATE outbox_events
      * Returns a stable, paginated view of terminally failed events for operator review.
      * Both DEAD and legacy FAILED rows are included; active and completed events are excluded.
      */
+    /**
+     * Persists sanitized failure intelligence in the existing event history stream.
+     * This is intentionally independent of the outbox retry-state transaction.
+     */
+    public void recordFailureFingerprint(
+        OutboxEvent event,
+        String workerId,
+        FailureFingerprint fingerprint
+    ) throws SQLException {
+        Objects.requireNonNull(event, "event must not be null");
+        Objects.requireNonNull(fingerprint, "fingerprint must not be null");
+
+        String details = "{\"fingerprint\":\"" + escapeJson(fingerprint.fingerprint())
+            + "\",\"exceptionType\":\"" + escapeJson(fingerprint.exceptionType())
+            + "\",\"normalizedMessage\":\"" + escapeJson(fingerprint.normalizedMessage()) + "\"}";
+        historyRepository.record(event, "FAILURE_FINGERPRINTED", workerId, details);
+    }
     public List<OutboxEvent> listDeadEvents(int limit, int offset) throws SQLException {
         if (limit <= 0 || limit > 500) {
             throw new IllegalArgumentException("limit must be between 1 and 500");

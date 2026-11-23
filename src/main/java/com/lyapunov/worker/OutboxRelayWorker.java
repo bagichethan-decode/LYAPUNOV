@@ -1,6 +1,7 @@
 package com.lyapunov.worker;
 
 import com.lyapunov.model.OutboxEvent;
+import com.lyapunov.failure.FailureFingerprinter;
 import com.lyapunov.repository.WorkerHeartbeatStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -108,6 +109,15 @@ public final class OutboxRelayWorker implements Runnable, AutoCloseable {
                 lastError.set(deliveryFailure.getClass().getSimpleName() + ": " + String.valueOf(deliveryFailure.getMessage()));
                 log.error("Outbox delivery failed; eventId={}, retryCount={}",
                     event.id(), event.retryCount(), deliveryFailure);
+                try {
+                    store.recordFailureFingerprint(
+                        event, workerId, FailureFingerprinter.fingerprint(deliveryFailure)
+                    );
+                } catch (Exception intelligenceFailure) {
+                    // Failure intelligence is observational; it must not block retry recovery.
+                    log.warn("Could not persist failure fingerprint; eventId={}", event.id(),
+                        intelligenceFailure);
+                }
                 try {
                     store.failed(event.id(), workerId, event.claimToken(), maxRetries,
                         baseRetryDelay, maxRetryDelay);
