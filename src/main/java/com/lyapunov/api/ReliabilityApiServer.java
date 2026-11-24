@@ -1,5 +1,6 @@
 package com.lyapunov.api;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -67,7 +68,8 @@ public final class ReliabilityApiServer implements AutoCloseable {
             return thread;
         };
 
-        server.setExecutor(Executors.newFixedThreadPool(8, factory));
+        this.executor = Executors.newFixedThreadPool(8, factory);
+        server.setExecutor(executor);
         server.createContext("/health", this::handleHealth);
         server.createContext("/api/v1/events", this::handleEvents);
         server.createContext("/api/v1/workers", this::handleWorkers);
@@ -238,7 +240,7 @@ public final class ReliabilityApiServer implements AutoCloseable {
         String contentType = exchange.getRequestHeaders()
             .getFirst("Content-Type");
 
-        if (contentType == null ||
++
             !contentType.toLowerCase().startsWith("application/json")) {
             throw new IllegalArgumentException(
                 "Content-Type must be application/json"
@@ -442,7 +444,7 @@ public final class ReliabilityApiServer implements AutoCloseable {
                 })
             );
 
-            Thread.currentThread().join();
+            new CountDownLatch(1).await();
 
         } catch (Exception exception) {
             if (api != null) {
