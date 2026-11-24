@@ -50,7 +50,7 @@ public final class ReliabilityApiServer implements AutoCloseable {
         if (host == null || host.isBlank()) {
             throw new IllegalArgumentException("Host must not be blank");
         }
-        if (port < 1 || port > 65535) {
+        if (port < 0 || port > 65535) {
             throw new IllegalArgumentException("Port must be between 1 and 65535");
         }
         if (dataSource == null) {
@@ -243,8 +243,9 @@ public final class ReliabilityApiServer implements AutoCloseable {
         String contentType = exchange.getRequestHeaders()
             .getFirst("Content-Type");
 
-+
-            !contentType.toLowerCase().startsWith("application/json")) {
+        if (contentType == null ||
+            !contentType.split(";", 2)[0].trim()
+                .equalsIgnoreCase("application/json")) {
             throw new IllegalArgumentException(
                 "Content-Type must be application/json"
             );
@@ -264,7 +265,13 @@ public final class ReliabilityApiServer implements AutoCloseable {
             throw new IllegalArgumentException("Request body is too large");
         }
 
-        JsonNode body = JSON.readTree(bytes);
+        JsonNode body;
+
+        try {
+            body = JSON.readTree(bytes);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalArgumentException("Request body contains invalid JSON");
+        }
 
         if (body == null || !body.isObject()) {
             throw new IllegalArgumentException(
@@ -274,7 +281,6 @@ public final class ReliabilityApiServer implements AutoCloseable {
 
         return body;
     }
-
     private static String requiredText(
         JsonNode body,
         String field,
