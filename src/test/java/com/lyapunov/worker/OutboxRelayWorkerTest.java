@@ -239,6 +239,9 @@ class OutboxRelayWorkerTest {
         List<UUID> failed = new ArrayList<>();
         boolean acceptPublished = true;
         UUID publishedPersistenceFailureId;
+        boolean failFingerprintPersistence;
+        int failureFingerprintAttempts;
+        List<FailureFingerprint> fingerprints = new ArrayList<>();
     boolean failFailurePersistence;
     int failurePersistenceAttempts;
 
@@ -265,5 +268,19 @@ class OutboxRelayWorkerTest {
             failed.add(id);
             return true;
         }
+
+        @Override
+        public void recordFailureFingerprint(
+            OutboxEvent event,
+            String workerId,
+            FailureFingerprint fingerprint
+        ) throws Exception {
+            failureFingerprintAttempts++;
+            if (failFingerprintPersistence) {
+                throw new Exception("fingerprint persistence unavailable");
+            }
+            fingerprints.add(fingerprint);
+        }
+
     }
 }
