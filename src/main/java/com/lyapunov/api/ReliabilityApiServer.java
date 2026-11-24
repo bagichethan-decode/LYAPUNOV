@@ -25,6 +25,8 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 
@@ -34,6 +36,7 @@ public final class ReliabilityApiServer implements AutoCloseable {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final HttpServer server;
+    private final ExecutorService executor;
     private final DataSource dataSource;
     private final OutboxRepository outboxRepository;
     private final WorkerHeartbeatRepository heartbeatRepository;
@@ -394,6 +397,7 @@ public final class ReliabilityApiServer implements AutoCloseable {
     @Override
     public void close() {
         server.stop(1);
+        executor.shutdownNow();
     }
 
     public static void main(String[] args) throws Exception {
