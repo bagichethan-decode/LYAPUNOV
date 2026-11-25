@@ -779,4 +779,123 @@ UPDATE outbox_events
             rs.getTimestamp("updated_at").toInstant()
         );
     }
+public OutboxEvent enqueue(
+    Connection connection,
+    String aggregateType,
+    String aggregateId,
+    String eventType,
+    String payload
+) throws SQLException {
+
+    if (connection == null) {
+        throw new IllegalArgumentException("connection must not be null");
+    }
+
+    if (connection.isClosed()) {
+        throw new SQLException("connection is closed");
+    }
+
+    if (connection.getAutoCommit()) {
+        throw new IllegalArgumentException(
+            "connection must have auto-commit disabled"
+        );
+    }
+
+    validateEnqueueField(aggregateType, "aggregateType");
+    validateEnqueueField(aggregateId, "aggregateId");
+    validateEnqueueField(eventType, "eventType");
+
+    if (payload == null || payload.isBlank()) {
+        throw new IllegalArgumentException(
+            "payload must not be null or blank"
+        );
+    }
+
+    String lockSql = """
+        SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))
+    """;
+
+    String sequenceSql = """
+        SELECT COALESCE(MAX(sequence_number), 0) + 1
+        FROM outbox_events
+        WHERE aggregate_type = ?
+          AND aggregate_id = ?
+    """;
+
+    String insertSql = """
+        INSERT INTO outbox_events (
+            aggregate_type,
+            aggregate_id,
+            sequence_number,
+            event_type,
+            payload,
+            status,
+            retry_count,
+            next_attempt_at
+        )
+        VALUES (?, ?, ?, ?, ?::jsonb, 'PENDING', 0, clock_timestamp())
+        RETURNING id, aggregate_type, aggregate_id, sequence_number,
+                  event_type, payload, status, retry_count, claimed_by,
+                  claim_token, lease_expires_at, created_at, updated_at
+    """;
+
+    try (PreparedStatement lockStmt =
+             connection.prepareStatement(lockSql)) {
+
+        lockStmt.setString(1, aggregateType);
+        lockStmt.setString(2, aggregateId);
+        lockStmt.execute();
+    }
+
+    long sequenceNumber;
+
+    try (PreparedStatement sequenceStmt =
+             connection.prepareStatement(sequenceSql)) {
+
+        sequenceStmt.setString(1, aggregateType);
+        sequenceStmt.setString(2, aggregateId);
+
+        try (ResultSet rs = sequenceStmt.executeQuery()) {
+            if (!rs.next()) {
+                throw new SQLException(
+                    "Could not allocate aggregate sequence"
+                );
+            }
+
+            sequenceNumber = rs.getLong(1);
+        }
+    }
+
+    OutboxEvent event;
+
+    try (PreparedStatement insertStmt =
+             connection.prepareStatement(insertSql)) {
+
+        insertStmt.setString(1, aggregateType);
+        insertStmt.setString(2, aggregateId);
+        insertStmt.setLong(3, sequenceNumber);
+        insertStmt.setString(4, eventType);
+        insertStmt.setString(5, payload);
+
+        try (ResultSet rs = insertStmt.executeQuery()) {
+            if (!rs.next()) {
+                throw new SQLException(
+                    "Outbox event insertion returned no row"
+                );
+            }
+
+            event = mapEvent(rs);
+        }
+    }
+
+    historyRepository.record(
+        connection,
+        event,
+        "EVENT_ENQUEUED",
+        null,
+        "{}"
+    );
+
+    return event;
+}
 }
