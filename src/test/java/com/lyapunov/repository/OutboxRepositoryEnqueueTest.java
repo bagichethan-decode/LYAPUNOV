@@ -12,6 +12,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -119,6 +121,107 @@ class OutboxRepositoryEnqueueTest {
                 assertEquals("EVENT_ENQUEUED", rs.getString("action"));
                 assertFalse(rs.next());
             }
+        }
+    }
+
+    @Test
+    void callerTransactionCommitPersistsEventAndHistory() throws Exception {
+        OutboxEvent event;
+
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+
+            event = repository.enqueue(
+                connection,
+                "Order",
+                "caller-commit-order",
+                "ORDER_CREATED",
+                "{}"
+            );
+
+            assertFalse(connection.getAutoCommit());
+            assertFalse(connection.isClosed());
+
+            connection.commit();
+        }
+
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                 SELECT
+                     (SELECT COUNT(*) FROM outbox_events WHERE id = ?) AS events,
+                     (SELECT COUNT(*) FROM event_history WHERE event_id = ?) AS history
+                 """)) {
+
+            statement.setObject(1, event.id());
+            statement.setObject(2, event.id());
+
+            try (ResultSet rs = statement.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals(1L, rs.getLong("events"));
+                assertEquals(1L, rs.getLong("history"));
+            }
+        }
+    }
+
+    @Test
+    void callerTransactionRollbackRemovesEventAndHistory() throws Exception {
+        OutboxEvent event;
+
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+
+            event = repository.enqueue(
+                connection,
+                "Order",
+                "caller-rollback-order",
+                "ORDER_CREATED",
+                "{}"
+            );
+
+            assertFalse(connection.getAutoCommit());
+            assertFalse(connection.isClosed());
+
+            connection.rollback();
+        }
+
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                 SELECT
+                     (SELECT COUNT(*) FROM outbox_events WHERE id = ?) AS events,
+                     (SELECT COUNT(*) FROM event_history WHERE event_id = ?) AS history
+                 """)) {
+
+            statement.setObject(1, event.id());
+            statement.setObject(2, event.id());
+
+            try (ResultSet rs = statement.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals(0L, rs.getLong("events"));
+                assertEquals(0L, rs.getLong("history"));
+            }
+        }
+    }
+
+    @Test
+    void callerOwnedEnqueueRejectsAutoCommitConnectionWithoutClosingIt()
+            throws Exception {
+
+        try (Connection connection = dataSource.getConnection()) {
+            assertTrue(connection.getAutoCommit());
+
+            assertThrows(
+                IllegalArgumentException.class,
+                () -> repository.enqueue(
+                    connection,
+                    "Order",
+                    "caller-autocommit-order",
+                    "ORDER_CREATED",
+                    "{}"
+                )
+            );
+
+            assertFalse(connection.isClosed());
+            assertTrue(connection.getAutoCommit());
         }
     }
 
