@@ -66,6 +66,12 @@
             <version>${logback.version}</version>
         </dependency>
 
+        <!-- Unified command-line interface -->
+        <dependency>
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli</artifactId>
+            <version>4.7.6</version>
+        </dependency>
         <!-- Testing -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
